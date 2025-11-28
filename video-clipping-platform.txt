@@ -1,0 +1,98 @@
+Kastraclip
+
+## 📋 Visão Geral do Sistema
+
+Plataforma SaaS que permite:
+1. Upload de vídeos (até 1 hora)
+2. Geração automática de cortes com IA
+3. Armazenamento organizado por pasta
+4. Agendamento de publicações
+5. Postagem automática em TikTok, Instagram e YouTube Shorts
+
+---
+
+## 🏗️ Arquitetura do Sistema
+
+┌─────────────┐ ┌────────────────┐
+│ Frontend │ ───────▶ │ Backend │
+│ (Next.js) │ │ (Django) │
+└─────────────┘ └────────────────┘
+│
+├─────▶ PostgreSQL
+├─────▶ S3
+└─────▶ Celery + RabbitMQ
+│
+└──▶ FunClip + FFmpeg
+
+---
+
+## 🛠️ Stack Tecnológica Recomendada
+
+### **Frontend**
+- Next.js 15 (App Router)
+- TailwindCSS + shadcn/ui
+- React Query
+
+---
+
+### **Backend**
+- Django
+- Celery + RabbitMQ
+- S3 via `django-storages`
+- Django Auth
+- FFmpeg + FunClip (processamento IA)
+
+---
+
+### **Database**
+- PostgreSQL 
+
+---
+
+## 🔄 Fluxo Completo do Sistema
+
+1. Usuário faz login  
+2. Acessa o dashboard  
+3. Faz upload do vídeo via frontend  
+4. Django envia o arquivo para S3 
+5. Frontend botão de gerar clips
+6. Django cria task no Celery 
+7. Celery chama FunClip + FFmpeg 
+8. IA gera cortes  
+9. Cortes são salvos no S3 dentro da pasta do vídeo  
+10. Usuário acessa os cortes  
+11. Usuário agenda  
+12. Celery executa o post automático na data marcada  
+13. Plataformas: TikTok, Instagram, YouTube Shorts  
+
+---
+
+## 🧠 IA — FunClip + FFmpeg
+
+- FunClip identifica momentos relevantes automaticamente  
+- FFmpeg corta e gera arquivos finais  
+- Processamento todo feito no Celery, nunca no request do usuário  
+
+---
+
+## 📅 Agendamentos
+
+- Celery Beat controla horários  
+- Django salva o agendamento  
+- Celery executa o post automático  
+- APIs oficiais das plataformas são usadas  
+
+---
+
+## 🤝 Integrações de Postagem
+
+### TikTok  
+- Content Posting API
+
+### Instagram  
+- Meta Graph API
+
+### YouTube  
+- YouTube Data API (upload → Shorts)
+
+---

@@ -1,0 +1,55 @@
+npm test
+
+set -e
+
+if [ -z "$(git diff --cached --name-only)" ]; then
+  echo "No staged files to format"
+  exit 0
+fi
+
+STAGED_HASH=$(git diff --cached | sha256sum | cut -d' ' -f1)
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+PARTIALLY_STAGED=$(git diff --name-only)
+
+git stash push --quiet --keep-index --message "pre-commit-stash" || true
+STASHED=$?
+
+npx ultracite fix
+FORMAT_EXIT_CODE=$?
+
+if [ $STASHED -eq 0 ]; then
+  if [ -n "$STAGED_FILES" ]; then
+    echo "$STAGED_FILES" | while IFS= read -r file; do
+      if [ -f "$file" ]; then
+        git add "$file"
+      fi
+    done
+  fi
+  
+  git stash pop --quiet || true
+  
+  if [ -n "$PARTIALLY_STAGED" ]; then
+    for file in $PARTIALLY_STAGED; do
+      if [ -f "$file" ] && echo "$STAGED_FILES" | grep -q "^$file$"; then
+        git restore --staged "$file" 2>/dev/null || true
+        git add -p "$file" < /dev/null 2>/dev/null || git add "$file"
+      fi
+    done
+  fi
+else
+  if [ -n "$STAGED_FILES" ]; then
+    echo "$STAGED_FILES" | while IFS= read -r file; do
+      if [ -f "$file" ]; then
+        git add "$file"
+      fi
+    done
+  fi
+fi
+
+NEW_STAGED_HASH=$(git diff --cached | sha256sum | cut -d' ' -f1)
+if [ "$STAGED_HASH" != "$NEW_STAGED_HASH" ]; then
+  echo "✨ Files formatted by Ultracite"
+fi
+
+exit $FORMAT_EXIT_CODE
