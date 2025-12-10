@@ -1,19 +1,19 @@
-Setup Produção — Kastraclip
+Setup Produção — klipou
 
 Estrutura
 c:\Users\r\codes\
-├── kastraclip/
+├── klipou/
 │   ├── backend/          # Django (venv)
 │   ├── web/              # Next.js (pnpm)
 │   └── docker-compose.yml
 
 1. Subir Docker (PostgreSQL + RabbitMQ)
-cd kastraclip
+cd klipou
 docker compose up -d
 docker compose ps
 
 2. Backend (venv)
-cd kastraclip/backend
+cd klipou/backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -36,7 +36,7 @@ Ou Whisper C++ (mais rápido):
 pip install whispercpp
 
 5. Migrations
-cd kastraclip/backend
+cd klipou/backend
 source venv/bin/activate
 python manage.py makemigrations
 python manage.py migrate
@@ -45,7 +45,7 @@ python manage.py migrate
 
 backend/.env:
 
-DATABASE_URL=postgres://kastra:kastra@localhost:5432/kastraclip
+DATABASE_URL=postgres://klipou:klipou@localhost:5432/klipou
 
 CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
 CELERY_RESULT_BACKEND=rpc://
@@ -64,17 +64,17 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 
 7. Iniciar Serviços
 Backend
-cd kastraclip/backend
+cd klipou/backend
 source venv/bin/activate
 python manage.py runserver
 
 Celery Worker
-cd kastraclip/backend
+cd klipou/backend
 source venv/bin/activate
 celery -A core worker -l info
 
 Frontend
-cd kastraclip/web
+cd klipou/web
 pnpm install
 pnpm dev
 

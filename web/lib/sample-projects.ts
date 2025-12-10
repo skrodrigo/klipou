@@ -22,7 +22,7 @@ export const sampleProjects: ProjectSummary[] = [
   },
   {
     id: "proj-2",
-    title: "Lançamento do curso Kastra",
+    title: "Lançamento do curso klipou",
     description: "Sequência de vídeos para funil pago e orgânico",
     lastUpdated: "Ontem",
     status: "completed",

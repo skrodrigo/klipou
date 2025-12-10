@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: kastraclip
-      POSTGRES_USER: kastra
-      POSTGRES_PASSWORD: kastra
+      POSTGRES_DB: klipou
+      POSTGRES_USER: klipou
+      POSTGRES_PASSWORD: klipou
     ports:
       - "5432:5432"
 

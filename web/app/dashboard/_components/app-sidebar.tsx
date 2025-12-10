@@ -109,7 +109,7 @@ export function AppSidebar() {
       <Sidebar>
         <SidebarHeader className="space-y-4">
           <div className="flex justify-between items-center">
-            <Image src='/Kastra.svg' alt="logo" width={100} height={100} className="mt-2 ml-1 " />
+            <Image src='/klipou.svg' alt="logo" width={100} height={100} className="mt-2 ml-1 " />
             <DropdownMenu >
               <DropdownMenuTrigger asChild className="flex pt-4 justify-end items-end">
                 <div>

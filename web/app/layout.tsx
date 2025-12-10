@@ -19,8 +19,8 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Kastra Clip",
-  description: "by Kastra Clip",
+  title: "klipou Clip",
+  description: "by klipou Clip",
 };
 
 export default function RootLayout({
