@@ -11,6 +11,8 @@ export type Video = {
   created_at: string
   status: "pending" | "processing" | "completed" | "failed"
   progress?: number
+  duration?: number
+  thumbnail?: string
   clips: VideoClip[]
 }
 

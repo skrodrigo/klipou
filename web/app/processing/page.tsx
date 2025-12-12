@@ -4,9 +4,10 @@ import React, { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, Check, Circle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { IconCheck, IconLoader2, IconLogout2 } from "@tabler/icons-react"
+import { IconCheck, IconLoader2, IconLogout2, IconAlertCircle, IconCircleCheck, IconCircleCheckFilled } from "@tabler/icons-react"
 import { requestSSE } from "@/infra/http"
 import { useVideoStore } from "@/lib/store/video-store"
+import { cn } from "@/lib/utils"
 
 type ProcessingStatus = "queue" | "sending" | "creating" | "hunting" | "completed" | "failed"
 
@@ -15,6 +16,7 @@ interface StatusMessage {
   progress: number
   queue_position?: number
   error?: string
+  failed_stage?: ProcessingStatus
 }
 
 export default function ProcessingPage() {
@@ -26,12 +28,22 @@ export default function ProcessingPage() {
   const { videoFile, videoUrl } = useVideoStore()
   const videoTitle = videoFile?.name || "Seu vídeo"
   const [error, setError] = useState<string | null>(null)
+  const [failedStage, setFailedStage] = useState<ProcessingStatus | null>(null)
+  const [thumbnail, setThumbnail] = useState<string | null>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const id = params.get("videoId");
     if (id) {
       setVideoId(id);
+      fetch(`/api/videos/${id}/`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.thumbnail) {
+            setThumbnail(data.thumbnail);
+          }
+        })
+        .catch(err => console.error("Error fetching video:", err));
     }
   }, []);
 
@@ -61,6 +73,7 @@ export default function ProcessingPage() {
         } else if (data.status === "failed") {
           isClosing = true;
           setError(data.error || "O processamento falhou. Por favor, tente novamente.");
+          setFailedStage(data.failed_stage || null);
           eventSource.close();
         }
       } catch (e) {
@@ -100,31 +113,35 @@ export default function ProcessingPage() {
     }
   }
 
-  const isStageActive = (stage: ProcessingStatus) => status === stage
-  const isStageCompleted = (stage: ProcessingStatus) => {
-    const stages = ["queue", "sending", "creating", "hunting"]
-    return stages.indexOf(status) > stages.indexOf(stage)
-  }
+  const stages: ProcessingStatus[] = ["queue", "sending", "creating", "hunting"];
+
+  const getStageState = (stage: ProcessingStatus): 'completed' | 'active' | 'pending' | 'failed' => {
+    const stageIndex = stages.indexOf(stage);
+
+    if (failedStage) {
+      const failedIndex = stages.indexOf(failedStage);
+      if (stageIndex < failedIndex) return 'completed';
+      return 'failed';
+    }
+
+    const statusIndex = stages.indexOf(status);
+    if (stageIndex < statusIndex) return 'completed';
+    if (stageIndex === statusIndex) return 'active';
+    return 'pending';
+  };
 
   return (
     <div className="w-full flex flex-col p-6 h-screen">
-      <button
-        onClick={() => router.back()}
-        className="flex items-center gap-2 text-foreground hover:text-foreground text-sm mb-8 w-fit"
-      >
-        <ArrowLeft size={16} /> Voltar
-      </button>
 
       <div className="flex-1 flex flex-col items-center justify-center">
         <div className="w-full max-w-xl space-y-8">
-          {error && (
-            <div className="bg-destructive/10 border border-destructive text-destructive rounded-md p-4 text-center">
-              <p className="font-medium">{error}</p>
-            </div>
-          )}
           <div className="bg-card border border-border rounded-md p-4 flex gap-4">
             <div className="w-16 h-16 bg-black rounded-md overflow-hidden flex-shrink-0">
-              {videoUrl && <video src={videoUrl} className="w-full h-full object-cover" />}
+              {thumbnail ? (
+                <img src={thumbnail} alt="Video thumbnail" className="w-full h-full object-cover" />
+              ) : videoUrl ? (
+                <video src={videoUrl} className="w-full h-full object-cover" />
+              ) : null}
             </div>
             <div className="flex-1">
               <h3 className="text-sm font-medium text-foreground mb-3 line-clamp-2">
@@ -136,77 +153,58 @@ export default function ProcessingPage() {
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <div className="text-xs text-muted-foreground mt-2">{getStatusLabel()} · {progress}%</div>
+              <div className="text-xs text-muted-foreground mt-2">{progress} %</div>
             </div>
           </div>
 
           {/* Info Text */}
           <p className="text-start text-muted-foreground">
-            Você já pode sair dessa página, assim que terminarmos será enviando um email para você.
-            <span className="text-blue-500 underline cursor-pointer"> Não me notifique</span>
+            Você já pode sair dessa página!
           </p>
 
           {/* Status List */}
           <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              {isStageCompleted("queue") ? (
-                <div className="w-5 h-5 rounded-full border border-primary flex items-center justify-center text-primary">
-                  <IconCheck size={12} />
+            {[{
+              stage: "queue",
+              label: "Next in queue",
+              failedLabel: "Falha na fila"
+            }, {
+              stage: "sending",
+              label: "Gerando Clipes",
+              failedLabel: "Erro ao gerar clipes"
+            }, {
+              stage: "creating",
+              label: "Criando seu projeto",
+              failedLabel: "Não foi possível criar o projeto"
+            }, {
+              stage: "hunting",
+              label: "Buscando melhores clipes",
+              failedLabel: "Erro ao buscar clipes"
+            }].map(({ stage, label, failedLabel }) => {
+              const state = getStageState(stage as ProcessingStatus);
+              return (
+                <div key={stage} className="flex items-center gap-3">
+                  {state === 'failed' ? (
+                    <IconAlertCircle size={20} className="text-destructive" />
+                  ) : state === 'completed' ? (
+                    <IconCircleCheckFilled size={20} className="text-primary" />
+                  ) : state === 'active' ? (
+                    <IconLoader2 size={20} className="animate-spin text-foreground" />
+                  ) : (
+                    <Circle size={20} className="text-muted-foreground" />
+                  )}
+                  <span className={cn(
+                    "text-sm",
+                    state === 'completed' && "text-muted-foreground line-through",
+                    state === 'active' && "text-foreground font-medium",
+                    state === 'pending' && "text-muted-foreground",
+                    state === 'failed' && "text-destructive font-semibold",
+                  )}>
+                    {state === 'failed' ? failedLabel : label}
+                  </span>
                 </div>
-              ) : isStageActive("queue") ? (
-                <IconLoader2 size={20} className="animate-spin text-foreground" />
-              ) : (
-                <Circle size={20} className=" text-muted-foreground" />
-              )}
-              <span className={isStageCompleted("queue") ? "text-muted-foreground line-through text-sm" : "text-muted-foreground text-sm"}>
-                Next in queue
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {isStageCompleted("sending") ? (
-                <div className="w-5 h-5 rounded-full border border-primary flex items-center justify-center text-primary">
-                  <Check size={12} />
-                </div>
-              ) : isStageActive("sending") ? (
-                <Loader2 size={20} className="animate-spin text-foreground" />
-              ) : (
-                <Circle size={20} className=" text-muted-foreground" />
-              )}
-              <span className={isStageActive("sending") ? "text-foreground font-medium text-sm" : "text-muted-foreground text-sm"}>
-                Enviando...
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {isStageCompleted("creating") ? (
-                <div className="w-5 h-5 rounded-full border border-primary flex items-center justify-center text-primary">
-                  <Check size={12} />
-                </div>
-              ) : isStageActive("creating") ? (
-                <Loader2 size={20} className="animate-spin text-foreground" />
-              ) : (
-                <Circle size={20} className=" text-muted-foreground" />
-              )}
-              <span className={isStageActive("creating") ? "text-foreground font-medium text-sm" : "text-muted-foreground text-sm"}>
-                Criando seu projeto
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {isStageCompleted("hunting") ? (
-                <div className="w-5 h-5 rounded-full border border-primary flex items-center justify-center text-primary">
-                  <Check size={12} />
-                </div>
-              ) : isStageActive("hunting") ? (
-                <Loader2 size={20} className="animate-spin text-foreground" />
-              ) : (
-                <Circle size={20} className=" text-muted-foreground" />
-              )}
-              <span className={isStageActive("hunting") ? "text-foreground font-semibold text-sm" : "text-muted-foreground text-sm"}>
-                Caçando as melhores partes
-              </span>
-            </div>
+              );
+            })}
           </div>
 
           <Button

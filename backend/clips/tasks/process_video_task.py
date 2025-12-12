@@ -1,9 +1,11 @@
 import os
 import re
 import subprocess
+import base64
 from celery import shared_task
 from django.core.cache import cache
 from django.conf import settings
+from django.core.files import File
 import requests
 
 from ..models import Video, VideoClip
@@ -14,18 +16,31 @@ def process_video_task(self, video_id: int) -> dict:
     """Processa vídeo com Whisper + FFmpeg locais"""
     import time
     
+    failed_stage = None
+    api_url = f"http://localhost:8000/api/videos/{video_id}/status/"
+    
     try:
         video = Video.objects.get(id=video_id)
         video.status = "processing"
         video.task_id = self.request.id
         video.save()
 
-        api_url = f"http://localhost:8000/api/videos/{video_id}/status/"
+        output_dir = os.path.join(settings.MEDIA_ROOT, f"clips/{video_id}")
+        os.makedirs(output_dir, exist_ok=True)
+
+        duration, thumbnail_path = _extract_metadata_with_ffmpeg(video.file.path, output_dir)
+        if thumbnail_path:
+            with open(thumbnail_path, "rb") as f:
+                thumbnail_data = f.read()
+                video.thumbnail = f"data:image/jpeg;base64,{base64.b64encode(thumbnail_data).decode()}"
+        video.duration = duration
+        video.save()
 
         video_path = video.file.path
         output_dir = os.path.join(settings.MEDIA_ROOT, f"clips/{video_id}")
         os.makedirs(output_dir, exist_ok=True)
 
+        failed_stage = "sending"
         requests.post(api_url, json={
             "status": "sending",
             "progress": 20,
@@ -36,6 +51,7 @@ def process_video_task(self, video_id: int) -> dict:
         raw_segments = _parse_srt_file(srt_file)
         candidate_clips = _build_clip_candidates(raw_segments)
 
+        failed_stage = "creating"
         requests.post(api_url, json={
             "status": "creating",
             "progress": 50,
@@ -44,6 +60,7 @@ def process_video_task(self, video_id: int) -> dict:
         
         clips_data = _generate_clips_with_ffmpeg(video_path, output_dir, candidate_clips)
 
+        failed_stage = "hunting"
         requests.post(api_url, json={
             "status": "hunting",
             "progress": 75,
@@ -77,13 +94,24 @@ def process_video_task(self, video_id: int) -> dict:
         except Video.DoesNotExist:
             pass
 
-        requests.post(api_url, json={
+        error_msg = str(e)
+        if "Whisper" in error_msg or "segmentos" in error_msg:
+            user_friendly_error = "Falha ao gerar transcrição. O áudio do vídeo pode estar inaudível ou corrompido."
+        elif "ffmpeg" in error_msg.lower() or "áudio" in error_msg.lower():
+            user_friendly_error = "Falha ao processar o áudio do vídeo. Verifique se o arquivo é válido."
+        else:
+            user_friendly_error = "Falha ao processar o vídeo. Por favor, verifique o arquivo e tente novamente."
+        
+        payload = {
             "status": "failed",
             "progress": 0,
-            "error": str(e)
-        })
+            "error": user_friendly_error,
+            "failed_stage": failed_stage
+        }
+        if api_url:
+            requests.post(api_url, json=payload)
 
-        return {"error": str(e), "status": "failed"}
+        return {"error": user_friendly_error, "status": "failed"}
 
 
 def _generate_srt_with_whisper(video_path: str, output_dir: str) -> str:
@@ -97,7 +125,6 @@ def _generate_srt_with_whisper(video_path: str, output_dir: str) -> str:
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Extrai o áudio primeiro para facilitar o trabalho do Whisper
     audio_path = _extract_audio_with_ffmpeg(video_path, output_dir)
 
     model_name = getattr(settings, "WHISPER_MODEL", "base")
@@ -106,12 +133,12 @@ def _generate_srt_with_whisper(video_path: str, output_dir: str) -> str:
     try:
         model = whisper.load_model(model_name, device=device)
         result = model.transcribe(audio_path)
-    except Exception as exc:  # pragma: no cover - erros internos do whisper
+    except Exception as exc:  
         raise Exception(f"Whisper falhou ao transcrever o vídeo: {exc}") from exc
 
     segments = result.get("segments") or []
     if not segments:
-        raise Exception("Whisper não retornou segmentos de áudio para gerar SRT")
+        raise Exception("Não foi possível gerar os segmentos de áudio")
 
     srt_file = os.path.join(output_dir, "transcript.srt")
 
@@ -480,3 +507,42 @@ def _srt_time_to_seconds(time_str: str) -> float:
     time_str = time_str.replace(",", ".")
     parts = time_str.split(":")
     return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+
+def _extract_metadata_with_ffmpeg(video_path: str, output_dir: str) -> tuple[float | None, str | None]:
+    """Extrai duração e thumbnail de um vídeo usando ffmpeg/ffprobe."""
+    ffmpeg_path = getattr(settings, "FFMPEG_PATH", "ffmpeg")
+    ffprobe_path = ffmpeg_path.replace("ffmpeg", "ffprobe")
+    thumbnail_path = os.path.join(output_dir, "thumbnail.jpg")
+    duration = None
+
+    try:
+        # Extrair duração
+        cmd_duration = [
+            ffprobe_path,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ]
+        result = subprocess.run(cmd_duration, capture_output=True, text=True, check=True)
+        duration = float(result.stdout.strip())
+
+        # Extrair thumbnail (em 10% do vídeo)
+        thumbnail_time = duration * 0.1
+        cmd_thumbnail = [
+            ffmpeg_path,
+            "-y",
+            "-ss", str(thumbnail_time),
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            thumbnail_path
+        ]
+        subprocess.run(cmd_thumbnail, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None, None
+
+    return duration, thumbnail_path if os.path.exists(thumbnail_path) else None
+

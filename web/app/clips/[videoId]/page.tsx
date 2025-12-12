@@ -1,30 +1,23 @@
 "use client"
 
 import { use, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import {
   IconPlayerPlayFilled,
-  IconDownload,
-  IconShare2,
-  IconBookmark,
-  IconThumbUp,
   IconFilter,
-  IconCheck,
   IconPencil,
   IconCopy,
   IconTrash,
-  IconMenu2,
+  IconArrowLeft,
+  IconScissors,
+  IconDownload,
+  IconShare3,
 } from "@tabler/icons-react"
 import { listVideoClips, type VideoClip } from "@/infra/videos/videos"
 import { useVideoProgress } from "@/hooks/useVideoProgress"
+import { ArrowLeft } from "lucide-react"
 
 type ClipsPageProps = {
   params: Promise<{
@@ -33,10 +26,11 @@ type ClipsPageProps = {
 }
 
 export default function ClipsPage({ params }: ClipsPageProps) {
+  const router = useRouter()
   const { videoId: videoIdStr } = use(params)
   const [clips, setClips] = useState<VideoClip[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedIdx, setSelectedIdx] = useState(0)
   const videoId = parseInt(videoIdStr, 10) || null
   const { progress, status, error } = useVideoProgress(videoId)
 
@@ -45,9 +39,6 @@ export default function ClipsPage({ params }: ClipsPageProps) {
       try {
         const items = await listVideoClips(videoId)
         setClips(items)
-        if (items.length > 0) {
-          setSelectedId(items[0].id)
-        }
       } finally {
         setLoading(false)
       }
@@ -56,238 +47,155 @@ export default function ClipsPage({ params }: ClipsPageProps) {
     loadClips()
   }, [videoId])
 
-  const selectedClip = clips.find((clip) => clip.id === selectedId) ?? null
-
   return (
-    <section className="w-full flex flex-col bg-background p-6">
-      {/* Error Banner */}
-      {error && (
-        <div className="absolute top-0 left-0 right-0 border-b bg-destructive/10 p-3 z-50">
-          <p className="text-xs font-medium text-destructive">{error.message}</p>
-        </div>
-      )}
+    <div className="w-full h-screen flex flex-col bg-background text-foreground relative">
+      <button
+        onClick={() => router.back()}
+        className="absolute fixed top-6 left-6 flex items-center gap-2 text-foreground hover:text-foreground text-sm z-10"
+      >
+        <ArrowLeft size={16} /> Voltar
+      </button>
 
-      {/* Processing Banner */}
-      {status === "processing" && !error && (
-        <div className="absolute top-0 left-0 right-0 border-b bg-muted/50 p-3 z-50">
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className="text-xs font-medium mb-1">Processando vídeo...</div>
-              <div className="w-full bg-muted rounded-md h-2">
-                <div
-                  className="bg-primary h-2 rounded-md transition-all"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-            <span className="text-xs text-muted-foreground">{progress}%</span>
-          </div>
-        </div>
-      )}
-
-      {/* Left Sidebar - Clips List */}
-      <aside className="w-64 border-r bg-muted/30 overflow-y-auto flex flex-col">
-        <div className="p-4 border-b">
-          <div className="flex items-center gap-2">
-            <IconMenu2 className="h-4 w-4" />
-            <h2 className="text-sm font-semibold">AI clips</h2>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {clips.map((clip, idx) => (
-            <button
-              key={clip.id}
-              type="button"
-              onClick={() => setSelectedId(clip.id)}
-              className={cn(
-                "w-full flex items-start gap-2 p-2 rounded-md text-left transition-colors text-xs",
-                selectedId === clip.id
-                  ? "bg-primary/20 border border-primary/30"
-                  : "hover:bg-muted border border-transparent"
-              )}
-            >
-              <div className="relative w-12 h-12 rounded bg-black text-white flex-shrink-0 flex items-center justify-center overflow-hidden">
-                <IconPlayerPlayFilled className="h-3 w-3" />
-                <div className="absolute bottom-0.5 right-0.5 bg-black/80 px-1 py-0.5 rounded text-xs font-medium">
-                  720p
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium line-clamp-2 text-xs">{clip.title}</p>
-                <p className="text-xs text-muted-foreground">#{idx + 1}</p>
-              </div>
-            </button>
-          ))}
-          {!loading && clips.length === 0 && (
-            <p className="text-xs text-muted-foreground p-2">Nenhum clip gerado ainda.</p>
-          )}
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Toolbar */}
-        <div className="border-b px-6 py-3 flex items-center gap-3 bg-background">
-          <div className="text-sm font-semibold">AI clips</div>
-          <div className="flex-1" />
-          <Button variant="ghost" size="sm" className="h-8 gap-2 text-xs">
-            <span>0/16</span>
-          </Button>
-          <Button variant="ghost" size="sm" className="h-8 gap-2 text-xs">
-            <IconFilter className="h-4 w-4" />
-            <span>Filter</span>
-          </Button>
-          <Select defaultValue="highest">
-            <SelectTrigger className="w-32 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="highest">Highest score</SelectItem>
-              <SelectItem value="lowest">Lowest score</SelectItem>
-              <SelectItem value="newest">Newest</SelectItem>
-              <SelectItem value="oldest">Oldest</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" size="sm" className="h-8 gap-2 text-xs">
-            <IconCheck className="h-4 w-4" />
-            <span>Select all</span>
-          </Button>
-        </div>
-
-        {/* Grid of Clips */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-2 gap-6">
+      <div className="flex-1 flex">
+        {/* Left Sidebar - Clips List */}
+        <aside className="w-80 pt-40 fixed overflow-y-auto hidden md:block shrink-0 flex flex-col justify-center">
+          <div className="p-4 space-y-2">
             {clips.map((clip, idx) => (
-              <div
+              <button
                 key={clip.id}
-                onClick={() => setSelectedId(clip.id)}
+                type="button"
+                onClick={() => setSelectedIdx(idx)}
                 className={cn(
-                  "group cursor-pointer rounded-md overflow-hidden border-2 transition-all",
-                  selectedId === clip.id
-                    ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-primary/50"
+                  "w-full flex items-center gap-3 p-2 rounded-lg text-left transition-all group",
+                  selectedIdx === idx
+                    ? "bg-zinc-800/80"
+                    : "hover:bg-zinc-900"
                 )}
               >
-                {/* Video Card */}
-                <div className="relative bg-black text-white overflow-hidden aspect-video">
+                {/* Vertical Thumbnail Placeholder */}
+                <div className="relative w-10 h-16 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <IconPlayerPlayFilled className="h-16 w-16 opacity-60" />
-                  </div>
-
-                  {/* Quality Badge */}
-                  <div className="absolute top-3 left-3 bg-black/80 px-2 py-1 rounded text-xs font-medium">
-                    720p
-                  </div>
-
-                  {/* Duration Badge */}
-                  <div className="absolute bottom-3 right-3 bg-black/80 px-2 py-1 rounded text-xs font-medium">
-                    01:05
+                    {/* Placeholder visual */}
+                    <div className="w-full h-full bg-zinc-700/20"></div>
                   </div>
                 </div>
 
-                {/* Card Content */}
-                <div className="p-4 space-y-3">
-                  {/* Title & Number */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <h3 className="text-sm font-semibold line-clamp-2">
-                        {clip.title}
-                      </h3>
-                    </div>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      #{idx + 1}
-                    </span>
-                  </div>
-
-                  {/* Score */}
-                  <div className="flex items-center gap-1">
-                    <span className="text-lg font-bold">9.8</span>
-                    <span className="text-xs text-muted-foreground">/10</span>
-                  </div>
-
-                  {/* Description */}
-                  <p className="text-xs text-muted-foreground line-clamp-2">
-                    {clip.title}
+                <div className="flex-1 min-w-0">
+                  <p className={cn(
+                    "text-xs font-medium line-clamp-2 leading-relaxed",
+                    selectedIdx === idx ? "text-zinc-100" : "text-foreground group-hover:text-zinc-300"
+                  )}>
+                    {clip.title || "Como eu uso o Cursor para front-end (do Figma ao código)"}
                   </p>
-
-                  {/* Action Buttons */}
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button size="sm" className="flex-1 h-8 text-xs">
-                      Publish
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-8">
-                      <IconDownload className="h-4 w-4" />
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-8">
-                      <IconShare2 className="h-4 w-4" />
-                    </Button>
-                  </div>
                 </div>
-              </div>
+              </button>
             ))}
-
             {!loading && clips.length === 0 && (
-              <div className="col-span-full flex items-center justify-center py-12">
-                <p className="text-sm text-muted-foreground">Nenhum clip gerado ainda.</p>
-              </div>
+              <p className="text-xs text-zinc-500 p-2">Nenhum clip gerado ainda.</p>
             )}
           </div>
-        </div>
-      </div>
+        </aside>
 
-      {/* Right Sidebar - Details */}
-      {selectedClip && (
-        <aside className="w-64 border-l bg-muted/30 overflow-y-auto p-4 space-y-4">
-          <div>
-            <h3 className="text-sm font-semibold mb-2">{selectedClip.title}</h3>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-bold">9.8</span>
-              <span className="text-xs text-muted-foreground">/10</span>
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-y-auto p-6 md:p-10">
+          <div className="mb-10 w-full flex justify-end items-center gap-2 max-w-7xl">
+            <Button variant="ghost" size="sm" className="h-9 bg-card text-zinc-300 hover:bg-zinc-800 hover:text-white gap-2 text-xs">
+              <IconFilter className="h-4 w-4" />
+              <span>Filtrar</span>
+            </Button>
+            <div className="flex items-center gap-2 bg-card rounded-md px-3 h-9">
+              <span className="text-xs text-zinc-300">Selecionar Tudo</span>
+              <div className="w-4 h-4 border border-zinc-500 rounded-sm" />
             </div>
           </div>
+          <div className="max-w-5xl mx-auto space-y-16 pb-20">
+            {clips.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
+                <IconPlayerPlayFilled className="h-12 w-12 mb-4 opacity-20" />
+                <p>Nenhum clip encontrado.</p>
+              </div>
+            ) : (
+              clips.map((clip, idx) => (
+                <div key={clip.id} className="flex flex-col lg:flex-row gap-8 items-start group">
 
-          <div className="space-y-2">
-            <Button variant="outline" className="w-full justify-start gap-2 text-xs h-9">
-              <IconDownload className="h-4 w-4" />
-              <span>Download</span>
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2 text-xs h-9">
-              <IconShare2 className="h-4 w-4" />
-              <span>Share</span>
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2 text-xs h-9">
-              <IconPencil className="h-4 w-4" />
-              <span>Edit</span>
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2 text-xs h-9">
-              <IconPencil className="h-4 w-4" />
-              <span>Rename</span>
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2 text-xs h-9">
-              <IconCopy className="h-4 w-4" />
-              <span>Duplicate</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 text-xs h-9 text-destructive"
-            >
-              <IconTrash className="h-4 w-4" />
-              <span>Delete</span>
-            </Button>
-          </div>
+                  {/* Left Column: Vertical Video Player */}
+                  <div className="shrink-0">
+                    <div className="relative w-[280px] aspect-[9/16] bg-card rounded-2xl overflow-hidden border border-zinc-800 shadow-xl">
+                      <div className="absolute inset-0 flex items-center justify-center text-zinc-700">
+                        {/* Placeholder Content */}
+                        <IconPlayerPlayFilled className="h-12 w-12 opacity-50" />
+                      </div>
+                    </div>
+                  </div>
 
-          <div className="border-t pt-4 space-y-2">
-            <Button variant="ghost" className="w-full justify-start gap-2 text-xs h-8">
-              <IconThumbUp className="h-4 w-4" />
-              <span>Like</span>
-            </Button>
-            <Button variant="ghost" className="w-full justify-start gap-2 text-xs h-8">
-              <IconBookmark className="h-4 w-4" />
-              <span>Save</span>
-            </Button>
+                  {/* Middle Column: Details */}
+                  <div className="flex-1 min-w-0 space-y-5 pt-2">
+                    {/* Header: ID + Title */}
+                    <div>
+                      <h3 className="text-lg font-medium text-zinc-100 flex items-start gap-2 leading-tight">
+                        <span className="text-emerald-500 font-bold">#{idx + 1}</span>
+                        {clip.title || "Redimensione vários elementos HTML com Copiar/Colar + IA!"}
+                      </h3>
+                    </div>
+
+                    {/* Stats & Primary Actions Row */}
+                    <div className="flex items-center flex-wrap gap-4">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-4xl font-bold text-white tracking-tighter">9.8</span>
+                        <span className="text-sm font-medium text-zinc-500">/10</span>
+                      </div>
+
+                      <div className="h-8 w-[1px] bg-zinc-800 mx-2 hidden sm:block"></div>
+
+                      <Button className="bg-primary hover:bg-emerald-700 text-white rounded-lg px-6 h-9 text-xs font-medium">
+                        <IconShare3 size={14} className="mr-2 rotate-90" />
+                        Publicar
+                      </Button>
+
+                      <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
+                        <IconDownload size={16} />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
+                        <IconShare3 size={16} />
+                      </Button>
+                    </div>
+
+                    {/* Transcript Text */}
+                    <div className="bg-transparent">
+                      <p className="text-sm text-muted-foreground leading-7">
+                        E aí, olha só, com o React Grab, teoricamente agora eu posso vir na minha aplicação, apertar Command C, ele vai abrir isso aqui, para eu selecionar o elemento que eu quero modificar, digamos assim, e aí eu posso falar para ele, por exemplo, esse texto aqui está muito negrito, então eu clico no texto e falo, vou criar um novo agente aqui, esse texto está negrito, diminua ele para a fonte Medium, por exemplo, do Tape. E eu dou um Enter no elemento selecionado ali, e o cursor vai entender automaticamente aonde é que está esse elemento. Olha só, ele entendeu automaticamente, sendo que eu só falei esse texto, eu não falei exatamente qual, por causa que eu copiei, exatamente ele copia qual que é o elemento...
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Floating Actions */}
+                  <div className="flex flex-row lg:flex-col gap-3 shrink-0 lg:pt-2 w-full lg:w-auto overflow-x-auto lg:overflow-visible">
+                    <ActionButton icon={<IconPencil size={15} />} label="Rename" />
+                    <ActionButton icon={<IconCopy size={15} />} label="Duplicate" />
+                    <ActionButton icon={<IconTrash size={15} />} label="Delete" variant="danger" />
+                    <ActionButton icon={<IconScissors size={15} />} label="Trim" />
+                  </div>
+
+                </div>
+              ))
+            )}
           </div>
-        </aside>
-      )}
-    </section>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+function ActionButton({ icon, label, variant = "default" }: { icon: React.ReactNode, label: string, variant?: "default" | "danger" }) {
+  return (
+    <button className={cn(
+      "flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-medium transition-all w-full lg:w-32 whitespace-nowrap",
+      variant === "danger"
+        ? "bg-card border-zinc-800 text-red-400 hover:bg-red-900/20 hover:border-red-900/50"
+        : "bg-card border-zinc-800 text-foreground hover:text-white"
+    )}>
+      {icon}
+      <span>{label}</span>
+    </button>
   )
 }

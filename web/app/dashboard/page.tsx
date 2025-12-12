@@ -3,19 +3,19 @@
 import { useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 
-import { Button } from "@/components/ui/button"
+import { useVideoStore } from "@/lib/store/video-store"
 import { Input } from "@/components/ui/input"
 import { Paperclip, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useVideoStore } from "@/lib/store/video-store"
+import { Button } from "@/components/ui/button"
 
 export default function DashboardPage() {
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { setVideoFile } = useVideoStore()
   const router = useRouter()
-  const setVideo = useVideoStore((state) => state.setVideo)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? [])
@@ -56,9 +56,10 @@ export default function DashboardPage() {
     setIsSubmitting(true)
     try {
       const file = files[0]
-      setVideo(file)
-
-      router.push(`/video-settings`)
+      if (file) {
+        setVideoFile(file)
+        router.push("/video-settings")
+      }
     } finally {
       setIsSubmitting(false)
     }

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { MoreHorizontal, Scissors } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -10,9 +11,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { listVideos } from "@/infra/videos/videos"
-import type { Video } from "@/infra/videos/videos"
+import { Video } from "@/infra/videos/types/videos-types"
 
 export default function ProjectsPage() {
+  const router = useRouter()
   const [videos, setVideos] = useState<Video[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
@@ -40,6 +42,13 @@ export default function ProjectsPage() {
       hour: "2-digit",
       minute: "2-digit",
     })
+  }
+
+  const formatDuration = (seconds: number | undefined) => {
+    if (seconds === undefined) return "00:00";
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
   }
 
   const getStatusColor = (status: string) => {
@@ -114,11 +123,22 @@ export default function ProjectsPage() {
           {videos.map((video) => (
             <div
               key={video.id}
-              className="group relative bg-card border border-border rounded-md overflow-hidden transition-colors cursor-pointer"
+              onClick={() => router.push(`/clips/${video.id}`)}
+              className="group relative bg-card border border-border rounded-md overflow-hidden transition-colors cursor-pointer hover:border-primary/50"
             >
-              {/* Thumbnail */}
               <div className="aspect-video bg-muted relative">
-                {/* Hover Overlay */}
+                {video.thumbnail ? (
+                  <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-muted" />
+                )}
+
+                {video.duration && (
+                  <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-md">
+                    {formatDuration(video.duration)}
+                  </div>
+                )}
+
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                   <div className="bg-muted px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium border border-border text-foreground">
                     <span className="text-muted-foreground">{video.clips?.length || 0}</span> Clips
@@ -128,13 +148,11 @@ export default function ProjectsPage() {
                   </div>
                 </div>
 
-                {/* Checkbox for selection */}
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100">
                   <div className="w-4 h-4 border border-muted-foreground rounded bg-transparent" />
                 </div>
               </div>
 
-              {/* Info */}
               <div className="p-4">
                 <div className="text-xs text-muted-foreground mb-1">{formatDate(video.created_at)}</div>
                 <h3 className="font-medium text-sm text-foreground mb-2 truncate">{video.title}</h3>
