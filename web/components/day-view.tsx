@@ -279,7 +279,7 @@ export function DayView({
               style={{ top: `${currentTimePosition}%` }}
             >
               <div className="relative flex items-center">
-                <div className="-left-1 absolute h-2 w-2 rounded-full bg-primary" />
+                <div className="-left-1 absolute h-2 w-2 rounded-lg bg-primary" />
                 <div className="h-[2px] w-full bg-primary" />
               </div>
             </div>
@@ -302,11 +302,11 @@ export function DayView({
                         "absolute h-[calc(var(--week-cells-height)/4)] w-full",
                         quarter === 0 && "top-0",
                         quarter === 1 &&
-                          "top-[calc(var(--week-cells-height)/4)]",
+                        "top-[calc(var(--week-cells-height)/4)]",
                         quarter === 2 &&
-                          "top-[calc(var(--week-cells-height)/4*2)]",
+                        "top-[calc(var(--week-cells-height)/4*2)]",
                         quarter === 3 &&
-                          "top-[calc(var(--week-cells-height)/4*3)]",
+                        "top-[calc(var(--week-cells-height)/4*3)]",
                       )}
                       date={currentDate}
                       id={`day-cell-${currentDate.toISOString()}-${quarterHourTime}`}

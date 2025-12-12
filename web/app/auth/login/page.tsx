@@ -7,7 +7,7 @@ export default function LoginPage() {
     <main className="max-w-md h-screen flex flex-col justify-center items-center mx-auto p-8">
       <Image src='/logos/klipou.svg' alt="logo" width={100} height={100} className="mb-10 w-20" priority quality={100} />
       <AuthLoginForm />
-      <span className="mt-4 text-foreground dark:text-muted">Não tem conta? <Link href='/auth/register' className="underline text-blue-400">Registre-se</Link></span>
+      <span className="mt-4 text-foreground">Não tem conta? <Link href='/auth/register' className="underline text-blue-400">Registre-se</Link></span>
     </main>
   );
 }

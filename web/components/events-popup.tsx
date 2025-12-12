@@ -99,7 +99,7 @@ export function EventsPopup({
         <h3 className="font-medium">{format(date, "d MMMM yyyy")}</h3>
         <button
           aria-label="Close"
-          className="rounded-full p-1 hover:bg-muted"
+          className="rounded-lg p-1 hover:bg-muted"
           onClick={onClose}
           type="button"
         >

@@ -46,9 +46,9 @@ type CommandOption = {
 
 const quickLinks: CommandOption[] = [
   { label: "Dashboard", value: "/dashboard" },
-  { label: "Projetos", value: "/dashboard/projetos" },
+  { label: "Projetos", value: "/dashboard/projects" },
   { label: "Calendário", value: "/dashboard/calendar" },
-  { label: "Perfil", value: "/dashboard/profile" },
+  { label: "Perfil", value: "/profile" },
 ]
 
 const nav = [
@@ -69,12 +69,12 @@ const nav = [
   },
   {
     title: "Accounts",
-    url: "/dashboard/calendar",
+    url: "/dashboard/accounts",
     icon: IconSocial,
   },
   {
     title: "Analytics",
-    url: "/dashboard/calendar",
+    url: "/dashboard/analytics",
     icon: IconFileAnalytics,
   },
 ]
@@ -109,7 +109,7 @@ export function AppSidebar() {
       <Sidebar>
         <SidebarHeader className="space-y-4">
           <div className="flex justify-between items-center">
-            <Image src='/klipou.svg' alt="logo" width={100} height={100} className="mt-2 ml-1 " />
+            <Image src='/logos/klipou.svg' alt="logo" width={100} height={100} className="mt-6 w-10" />
             <DropdownMenu >
               <DropdownMenuTrigger asChild className="flex pt-4 justify-end items-end">
                 <div>
@@ -120,7 +120,7 @@ export function AppSidebar() {
                 </div>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuItem onSelect={() => router.push("/dashboard/profile")}>
+                <DropdownMenuItem onSelect={() => router.push("/profile")}>
                   <IconUser className="mr-2 h-4 w-4 text-muted-foreground" />
                   Account
                 </DropdownMenuItem>
@@ -137,7 +137,7 @@ export function AppSidebar() {
             <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Buscar..."
-              className="h-10 rounded-full bg-transparent pl-10 text-sm"
+              className="h-10 rounded-lg bg-transparent pl-10 text-sm"
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value)
@@ -172,7 +172,7 @@ export function AppSidebar() {
               <p className="text-xs text-muted-foreground leading-none">Créditos</p>
               <p className="text-sm font-medium">60 restantes</p>
             </div>
-            <Button size="sm" className="bg-emerald-600 text-white h-8" onClick={openDialog}>
+            <Button size="sm" className="bg-primary text-white h-8" onClick={openDialog}>
               Upgrade
             </Button>
           </div>

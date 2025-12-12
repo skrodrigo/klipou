@@ -30,13 +30,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${dmSans.variable} ${instrumentSerif.variable} antialiased bg-[#F9FAFB] dark:bg-[#101010]`} suppressHydrationWarning>
+      <body className={`${dmSans.variable} ${instrumentSerif.variable} antialiased`} suppressHydrationWarning>
         <QueryClientProviderWrapper>
           <UpgradeDialogProvider>
             <AuthProvider>
               <ThemeProvider
                 attribute="class"
-                defaultTheme="light"
+                defaultTheme="dark"
                 enableSystem
                 disableTransitionOnChange>
                 {children}

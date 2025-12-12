@@ -64,7 +64,7 @@ export function UpgradeDialogProvider({ children }: { children: React.ReactNode 
   const value = useMemo(
     () => ({
       open: false,
-      openDialog: () => router.push("/dashboard/upgrade"),
+      openDialog: () => router.push("/upgrade"),
       closeDialog: () => router.back(),
     }),
     [router]

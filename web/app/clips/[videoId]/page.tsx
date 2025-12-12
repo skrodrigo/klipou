@@ -73,9 +73,9 @@ export default function ClipsPage({ params }: ClipsPageProps) {
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className="text-xs font-medium mb-1">Processando vídeo...</div>
-              <div className="w-full bg-muted rounded-full h-2">
+              <div className="w-full bg-muted rounded-lg h-2">
                 <div
-                  className="bg-primary h-2 rounded-full transition-all"
+                  className="bg-primary h-2 rounded-lg transition-all"
                   style={{ width: `${progress}%` }}
                 />
               </div>

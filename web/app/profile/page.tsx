@@ -43,7 +43,7 @@ export default function ProfilePage() {
             <Button
               key={tab.value}
               variant={activeTab === tab.value ? "default" : "ghost"}
-              className="rounded-full"
+              className="rounded-lg"
               onClick={() => setActiveTab(tab.value)}
             >
               {tab.label}
@@ -82,8 +82,8 @@ function ProfileInfo() {
             <Input type="email" defaultValue="rodrigoa0987@gmail.com" className="h-11 rounded-2xl" />
           </div>
           <div className="flex gap-3">
-            <Button className="rounded-full">Salvar alterações</Button>
-            <Button variant="outline" className="rounded-full">
+            <Button className="rounded-lg">Salvar alterações</Button>
+            <Button variant="outline" className="rounded-lg">
               Atualizar senha
             </Button>
           </div>

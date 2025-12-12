@@ -14,9 +14,10 @@ export async function listVideos(): Promise<Video[]> {
   return data.results ?? []
 }
 
-export async function createVideo(file: File): Promise<CreateVideoResponse> {
+export async function createVideo(file: File, title?: string): Promise<CreateVideoResponse> {
   const formData = new FormData()
   formData.append("file", file)
+  formData.append("title", title || file.name)
   return request<CreateVideoResponse>("/api/videos/", {
     method: "POST",
     body: formData,

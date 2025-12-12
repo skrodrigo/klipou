@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Paperclip, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { IconVideo } from "@tabler/icons-react"
 import { createVideo } from "@/infra/videos/videos"
 
 export default function DashboardPage() {
@@ -20,10 +19,9 @@ export default function DashboardPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? [])
     const videoFiles = selected.filter((f) => f.type.startsWith("video"))
-    const unique = videoFiles.filter(
-      (f) => !files.some((file) => file.name === f.name && file.size === f.size)
-    )
-    setFiles((prev) => [...prev, ...unique])
+    if (videoFiles.length > 0) {
+      setFiles([videoFiles[0]])
+    }
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -40,10 +38,9 @@ export default function DashboardPage() {
     setIsDragging(false)
     const droppedFiles = Array.from(e.dataTransfer.files ?? [])
     const videoFiles = droppedFiles.filter((f) => f.type.startsWith("video"))
-    const unique = videoFiles.filter(
-      (f) => !files.some((file) => file.name === f.name && file.size === f.size)
-    )
-    setFiles((prev) => [...prev, ...unique])
+    if (videoFiles.length > 0) {
+      setFiles([videoFiles[0]])
+    }
   }
 
   const removeFile = (idx: number) => {
@@ -57,8 +54,17 @@ export default function DashboardPage() {
 
     setIsSubmitting(true)
     try {
-      await createVideo(files[0])
-      router.push(`/dashboard/projects`)
+      const file = files[0]
+      const videoUrl = URL.createObjectURL(file)
+
+      sessionStorage.setItem("videoUrl", videoUrl)
+      sessionStorage.setItem("videoFile", JSON.stringify({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      }))
+
+      router.push(`/video-settings`)
     } finally {
       setIsSubmitting(false)
     }
@@ -68,49 +74,44 @@ export default function DashboardPage() {
     <div className="flex items-center justify-center" style={{ minHeight: "calc(100vh - 3.5rem)" }}>
       <div className="w-full max-w-2xl px-4">
 
-        <div className="text-center mb-12">
-          <h1 className="text-4xl text-foreground mb-2">
-            <span className="font-semibold">Vídeos longos em{" "}</span>
-            <span className="text-emerald-600 font-serif">Clipes Virais</span>
-          </h1>
-        </div>
 
         {files.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-4">
-            {files.map((file, idx) => (
-              <div
-                key={file.name + file.size + idx}
-                className="relative group rounded-lg bg-muted p-3 border border-border hover:border-primary transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <IconVideo className="h-4 w-4 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-foreground truncate max-w-[120px]">
+            {files.map((file, idx) => {
+              const videoUrl = URL.createObjectURL(file)
+              return (
+                <div
+                  key={file.name + file.size + idx}
+                  className="relative group rounded-lg overflow-hidden border border-border w-24 h-24"
+                >
+                  <video
+                    src={videoUrl}
+                    className="w-full h-full object-cover bg-black"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <button
+                      onClick={() => removeFile(idx)}
+                      className="bg-accent text-white rounded-lg p-2 hover:bg-muted/90"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                    <p className="text-xs text-white font-medium truncate">
                       {file.name}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {(file.size / (1024 * 1024)).toFixed(1)} MB
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => removeFile(idx)}
-                  className="absolute -top-2 -right-2 bg-accent text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
         <div className="space-y-4 flex gap-2">
 
-
-
           <div
             className={cn(
-              "relative rounded-full transition-all flex-1",
+              "relative rounded-lg transition-all flex-1",
               isDragging ? "" : "border-border bg-input"
             )}
             onDragOver={handleDragOver}
@@ -133,7 +134,6 @@ export default function DashboardPage() {
                 <Paperclip className="h-5 w-5" />
               </button>
               <Input
-                type="text"
                 placeholder="Paste link or drag your video here"
                 className="flex-1 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground"
               />
@@ -141,7 +141,7 @@ export default function DashboardPage() {
           </div>
 
           <Button
-            className="rounded-full  h-12 font-semibold"
+            className="rounded-lg h-12 font-semibold"
             disabled={!files.length || isSubmitting}
             onClick={handleContinue}
           >

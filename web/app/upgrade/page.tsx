@@ -80,7 +80,7 @@ export default function UpgradePage() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-xl font-semibold">{plan.name}</h3>
                   {plan.tag ? (
-                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    <span className="rounded-lg bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                       {plan.tag}
                     </span>
                   ) : null}
@@ -97,7 +97,7 @@ export default function UpgradePage() {
                 <p className="text-sm text-muted-foreground">{plan.cadence}</p>
               </div>
               <Button
-                className={`mt-6 w-full rounded-full ${plan.highlight ? "bg-primary text-primary-foreground" : "bg-secondary"
+                className={`mt-6 w-full rounded-lg ${plan.highlight ? "bg-primary text-primary-foreground" : "bg-secondary"
                   }`}
                 variant={plan.highlight ? "default" : "secondary"}
               >

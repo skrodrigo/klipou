@@ -1,3 +1,4 @@
+import json
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.cache import cache
@@ -10,21 +11,26 @@ def video_progress_sse(request, video_id: int):
     Frontend se conecta e recebe atualizações em tempo real.
     """
     def event_stream():
-        last_progress = -1
-        max_attempts = 300  # 5 minutos com polling de 1s
+        last_status = None
+        max_attempts = 1800 
 
         for _ in range(max_attempts):
-            progress = cache.get(f"video_progress_{video_id}", -1)
+            status_data = cache.get(f"video_status_{video_id}")
+            
+            if status_data is None:
+                status_data = {
+                    "status": "queue",
+                    "progress": 0,
+                    "queue_position": None
+                }
 
-            if progress != last_progress:
-                last_progress = progress
-                if progress == 100:
-                    yield f"data: {{'progress': 100, 'status': 'completed'}}\n\n"
+            if status_data != last_status:
+                last_status = status_data
+                yield f"data: {json.dumps(status_data)}\n\n"
+                
+                if status_data.get("status") == "completed":
                     break
-                elif progress >= 0:
-                    yield f"data: {{'progress': {progress}, 'status': 'processing'}}\n\n"
 
-            # Aguarda 1 segundo antes de próxima verificação
             import time
             time.sleep(1)
 

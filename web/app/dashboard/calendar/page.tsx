@@ -22,7 +22,7 @@ export default function CalendarPage() {
   }
 
   return (
-    <section className="flex flex-col gap-6 p-10">
+    <section className="flex flex-col gap-6 p-12">
       <EventCalendar
         events={events}
         onEventAdd={handleEventAdd}

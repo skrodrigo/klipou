@@ -11,6 +11,8 @@ from ..models import Video, VideoClip
 @shared_task(bind=True, max_retries=2)
 def process_video_task(self, video_id: int) -> dict:
     """Processa vídeo com Whisper + FFmpeg locais"""
+    import time
+    
     try:
         video = Video.objects.get(id=video_id)
         video.status = "processing"
@@ -21,18 +23,36 @@ def process_video_task(self, video_id: int) -> dict:
         output_dir = os.path.join(settings.MEDIA_ROOT, f"clips/{video_id}")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Stage 1: Whisper - Reconhecimento
-        cache.set(f"video_progress_{video_id}", 25, timeout=3600)
+        # Stage 1: Whisper - Reconhecimento (Enviando)
+        cache.set(f"video_status_{video_id}", {
+            "status": "sending",
+            "progress": 20,
+            "queue_position": None
+        }, timeout=3600)
+        time.sleep(2)  # Simula tempo de processamento
+        
         srt_file = _generate_srt_with_whisper(video_path, output_dir)
         raw_segments = _parse_srt_file(srt_file)
         candidate_clips = _build_clip_candidates(raw_segments)
 
-        # Stage 2: FFmpeg - Corte dos melhores clipes
-        cache.set(f"video_progress_{video_id}", 50, timeout=3600)
+        # Stage 2: Criando projeto (Creating)
+        cache.set(f"video_status_{video_id}", {
+            "status": "creating",
+            "progress": 50,
+            "queue_position": None
+        }, timeout=3600)
+        time.sleep(2)  # Simula tempo de processamento
+        
         clips_data = _generate_clips_with_ffmpeg(video_path, output_dir, candidate_clips)
 
-        # Salvar no banco
-        cache.set(f"video_progress_{video_id}", 75, timeout=3600)
+        # Stage 3: Caçando as melhores partes (Hunting)
+        cache.set(f"video_status_{video_id}", {
+            "status": "hunting",
+            "progress": 75,
+            "queue_position": None
+        }, timeout=3600)
+        time.sleep(2)  # Simula tempo de processamento
+        
         for clip_info in clips_data:
             VideoClip.objects.create(
                 video=video,
@@ -41,9 +61,14 @@ def process_video_task(self, video_id: int) -> dict:
                 end_time=clip_info["end_time"],
             )
 
+        # Concluído
         video.status = "completed"
         video.save()
-        cache.set(f"video_progress_{video_id}", 100, timeout=3600)
+        cache.set(f"video_status_{video_id}", {
+            "status": "completed",
+            "progress": 100,
+            "queue_position": None
+        }, timeout=3600)
 
         return {"video_id": video_id, "status": "completed"}
 
