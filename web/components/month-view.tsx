@@ -148,7 +148,7 @@ export function MonthView({
                       onEventCreate(startTime);
                     }}
                   >
-                    <div className="mt-1 inline-flex size-6 items-center justify-center rounded-lg text-sm group-data-today:bg-primary group-data-today:text-primary-foreground">
+                    <div className="mt-1 inline-flex size-6 items-center justify-center rounded-md text-sm group-data-today:bg-primary group-data-today:text-primary-foreground">
                       {format(day, "d")}
                     </div>
                     <div

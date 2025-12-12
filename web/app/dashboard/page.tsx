@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Paperclip, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { createVideo } from "@/infra/videos/videos"
+import { useVideoStore } from "@/lib/store/video-store"
 
 export default function DashboardPage() {
   const [files, setFiles] = useState<File[]>([])
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
+  const setVideo = useVideoStore((state) => state.setVideo)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? [])
@@ -55,14 +56,7 @@ export default function DashboardPage() {
     setIsSubmitting(true)
     try {
       const file = files[0]
-      const videoUrl = URL.createObjectURL(file)
-
-      sessionStorage.setItem("videoUrl", videoUrl)
-      sessionStorage.setItem("videoFile", JSON.stringify({
-        name: file.name,
-        size: file.size,
-        type: file.type,
-      }))
+      setVideo(file)
 
       router.push(`/video-settings`)
     } finally {
@@ -82,7 +76,7 @@ export default function DashboardPage() {
               return (
                 <div
                   key={file.name + file.size + idx}
-                  className="relative group rounded-lg overflow-hidden border border-border w-24 h-24"
+                  className="relative group rounded-md overflow-hidden border border-border w-24 h-24"
                 >
                   <video
                     src={videoUrl}
@@ -91,7 +85,7 @@ export default function DashboardPage() {
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <button
                       onClick={() => removeFile(idx)}
-                      className="bg-accent text-white rounded-lg p-2 hover:bg-muted/90"
+                      className="bg-accent text-white rounded-md p-2 hover:bg-muted/90"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -111,7 +105,7 @@ export default function DashboardPage() {
 
           <div
             className={cn(
-              "relative rounded-lg transition-all flex-1",
+              "relative rounded-md transition-all flex-1",
               isDragging ? "" : "border-border bg-input"
             )}
             onDragOver={handleDragOver}
@@ -141,7 +135,7 @@ export default function DashboardPage() {
           </div>
 
           <Button
-            className="rounded-lg h-12 font-semibold"
+            className="rounded-md h-12 font-semibold"
             disabled={!files.length || isSubmitting}
             onClick={handleContinue}
           >

@@ -137,7 +137,7 @@ export function AppSidebar() {
             <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Buscar..."
-              className="h-10 rounded-lg bg-transparent pl-10 text-sm"
+              className="h-10 rounded-md bg-transparent pl-10 text-sm"
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value)
@@ -166,7 +166,7 @@ export function AppSidebar() {
           </SidebarGroup>
         </SidebarContent>
         <div className="border-t border-border p-4 space-y-4">
-          <div className="border border-border rounded-lg px-3 gap-2 py-2 flex items-center text-sm">
+          <div className="border border-border rounded-md px-3 gap-2 py-2 flex items-center text-sm">
             <IconAsterisk className="text-accent size-4" />
             <div className="flex-1">
               <p className="text-xs text-muted-foreground leading-none">Créditos</p>

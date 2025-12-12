@@ -279,7 +279,7 @@ export function DayView({
               style={{ top: `${currentTimePosition}%` }}
             >
               <div className="relative flex items-center">
-                <div className="-left-1 absolute h-2 w-2 rounded-lg bg-primary" />
+                <div className="-left-1 absolute h-2 w-2 rounded-md bg-primary" />
                 <div className="h-[2px] w-full bg-primary" />
               </div>
             </div>

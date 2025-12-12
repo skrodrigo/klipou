@@ -59,7 +59,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   const selectedClip = clips.find((clip) => clip.id === selectedId) ?? null
 
   return (
-    <section className="flex h-screen bg-background p-10 ">
+    <section className="w-full flex flex-col bg-background p-6">
       {/* Error Banner */}
       {error && (
         <div className="absolute top-0 left-0 right-0 border-b bg-destructive/10 p-3 z-50">
@@ -73,9 +73,9 @@ export default function ClipsPage({ params }: ClipsPageProps) {
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className="text-xs font-medium mb-1">Processando vídeo...</div>
-              <div className="w-full bg-muted rounded-lg h-2">
+              <div className="w-full bg-muted rounded-md h-2">
                 <div
-                  className="bg-primary h-2 rounded-lg transition-all"
+                  className="bg-primary h-2 rounded-md transition-all"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -100,7 +100,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
               type="button"
               onClick={() => setSelectedId(clip.id)}
               className={cn(
-                "w-full flex items-start gap-2 p-2 rounded-lg text-left transition-colors text-xs",
+                "w-full flex items-start gap-2 p-2 rounded-md text-left transition-colors text-xs",
                 selectedId === clip.id
                   ? "bg-primary/20 border border-primary/30"
                   : "hover:bg-muted border border-transparent"
@@ -162,7 +162,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                 key={clip.id}
                 onClick={() => setSelectedId(clip.id)}
                 className={cn(
-                  "group cursor-pointer rounded-2xl overflow-hidden border-2 transition-all",
+                  "group cursor-pointer rounded-md overflow-hidden border-2 transition-all",
                   selectedId === clip.id
                     ? "border-primary bg-primary/5"
                     : "border-muted hover:border-primary/50"

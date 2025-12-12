@@ -81,7 +81,7 @@ export default function ProjectsPage() {
             .map((_, i) => (
               <div
                 key={i}
-                className="group relative bg-card border border-border rounded-xl overflow-hidden"
+                className="group relative bg-card border border-border rounded-md overflow-hidden"
               >
                 <div className="aspect-video bg-muted relative">
                   <Skeleton className="w-full h-full rounded-none" />
@@ -114,16 +114,16 @@ export default function ProjectsPage() {
           {videos.map((video) => (
             <div
               key={video.id}
-              className="group relative bg-card border border-border rounded-xl overflow-hidden transition-colors cursor-pointer"
+              className="group relative bg-card border border-border rounded-md overflow-hidden transition-colors cursor-pointer"
             >
               {/* Thumbnail */}
               <div className="aspect-video bg-muted relative">
                 {/* Hover Overlay */}
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                  <div className="bg-muted px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium border border-border text-foreground">
+                  <div className="bg-muted px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium border border-border text-foreground">
                     <span className="text-muted-foreground">{video.clips?.length || 0}</span> Clips
                   </div>
-                  <div className="bg-muted p-1.5 rounded-lg border border-border text-foreground">
+                  <div className="bg-muted p-1.5 rounded-md border border-border text-foreground">
                     <Scissors size={14} />
                   </div>
                 </div>

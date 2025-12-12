@@ -23,7 +23,7 @@ export default function AccountsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {accounts.map((acc) => (
-          <div key={acc.name} className="bg-card border border-border rounded-xl p-6 flex flex-col h-48">
+          <div key={acc.name} className="bg-card border border-border rounded-md p-6 flex flex-col h-48">
             <Image src={acc.icon} alt={acc.name} width={30} height={30} className="h-[30px] mb-4" />
             <h3 className="text-lg font-semibold text-foreground">{acc.name}</h3>
             <p className="text-muted-foreground text-sm mb-auto">{acc.desc}</p>
@@ -41,7 +41,7 @@ export default function AccountsPage() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-card border border-border rounded-2xl p-8 w-full max-w-md relative">
+          <div className="bg-card border border-border rounded-md p-8 w-full max-w-md relative">
             <button
               onClick={() => setShowModal(false)}
               className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
