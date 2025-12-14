@@ -3,21 +3,12 @@
 import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
-import {
-  IconPlayerPlayFilled,
-  IconFilter,
-  IconPencil,
-  IconCopy,
-  IconTrash,
-  IconArrowLeft,
-  IconScissors,
-  IconDownload,
-  IconShare3,
-} from "@tabler/icons-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowLeft02Icon, Download01Icon, FilterIcon, PlayIcon, Share03Icon, Edit02Icon, Copy01Icon, Delete02Icon, SentIcon, ScissorIcon } from "@hugeicons/core-free-icons"
 import { listVideoClips, type VideoClip } from "@/infra/videos/videos"
-import { useVideoProgress } from "@/hooks/useVideoProgress"
-import { ArrowLeft } from "lucide-react"
+import { Spinner } from "@/components/ui/spinner"
 
 type ClipsPageProps = {
   params: Promise<{
@@ -32,7 +23,6 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   const [loading, setLoading] = useState(true)
   const [selectedIdx, setSelectedIdx] = useState(0)
   const videoId = parseInt(videoIdStr, 10) || null
-  const { progress, status, error } = useVideoProgress(videoId)
 
   useEffect(() => {
     async function loadClips() {
@@ -53,7 +43,8 @@ export default function ClipsPage({ params }: ClipsPageProps) {
         onClick={() => router.back()}
         className="absolute fixed top-6 left-6 flex items-center gap-2 text-foreground hover:text-foreground text-sm z-10"
       >
-        <ArrowLeft size={16} /> Voltar
+        <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} className="" />
+        Voltar
       </button>
 
       <div className="flex-1 flex">
@@ -99,20 +90,19 @@ export default function ClipsPage({ params }: ClipsPageProps) {
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-6 md:p-10">
           <div className="mb-10 w-full flex justify-end items-center gap-2 max-w-7xl">
-            <Button variant="ghost" size="sm" className="h-9 bg-card text-zinc-300 hover:bg-zinc-800 hover:text-white gap-2 text-xs">
-              <IconFilter className="h-4 w-4" />
+            <Button variant="secondary" size="sm" className="h-9 text-zinc-300 hover:bg-zinc-800 hover:text-white gap-2 text-xs">
+              <HugeiconsIcon icon={FilterIcon} className="h-4 w-4" />
               <span>Filtrar</span>
             </Button>
-            <div className="flex items-center gap-2 bg-card rounded-md px-3 h-9">
+            <div className="flex bg-card items-center gap-2  rounded-md px-3 h-9">
               <span className="text-xs text-zinc-300">Selecionar Tudo</span>
-              <div className="w-4 h-4 border border-zinc-500 rounded-sm" />
+              <Checkbox />
             </div>
           </div>
           <div className="max-w-5xl mx-auto space-y-16 pb-20">
             {clips.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
-                <IconPlayerPlayFilled className="h-12 w-12 mb-4 opacity-20" />
-                <p>Nenhum clip encontrado.</p>
+                <Spinner />
               </div>
             ) : (
               clips.map((clip, idx) => (
@@ -123,7 +113,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                     <div className="relative w-[280px] aspect-[9/16] bg-card rounded-2xl overflow-hidden border border-zinc-800 shadow-xl">
                       <div className="absolute inset-0 flex items-center justify-center text-zinc-700">
                         {/* Placeholder Content */}
-                        <IconPlayerPlayFilled className="h-12 w-12 opacity-50" />
+                        <HugeiconsIcon icon={PlayIcon} className="h-12 w-12 opacity-50" />
                       </div>
                     </div>
                   </div>
@@ -133,30 +123,30 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                     {/* Header: ID + Title */}
                     <div>
                       <h3 className="text-lg font-medium text-zinc-100 flex items-start gap-2 leading-tight">
-                        <span className="text-emerald-500 font-bold">#{idx + 1}</span>
+                        <span className="text-primary font-bold">#{idx + 1}</span>
                         {clip.title || "Redimensione vários elementos HTML com Copiar/Colar + IA!"}
                       </h3>
                     </div>
 
                     {/* Stats & Primary Actions Row */}
-                    <div className="flex items-center flex-wrap gap-4">
+                    <div className="flex items-center flex-wrap gap-2">
                       <div className="flex items-baseline gap-1">
                         <span className="text-4xl font-bold text-white tracking-tighter">9.8</span>
                         <span className="text-sm font-medium text-zinc-500">/10</span>
                       </div>
 
-                      <div className="h-8 w-[1px] bg-zinc-800 mx-2 hidden sm:block"></div>
+                      <div className="h-8 w-[1px] bg-muted mx-2 hidden sm:block"></div>
 
-                      <Button className="bg-primary hover:bg-emerald-700 text-white rounded-lg px-6 h-9 text-xs font-medium">
-                        <IconShare3 size={14} className="mr-2 rotate-90" />
+                      <Button className="bg-primary text-white rounded-lg px-6 h-9 text-xs font-medium">
+                        <HugeiconsIcon icon={SentIcon} size={14} className="mr-2" />
                         Publicar
                       </Button>
 
-                      <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
-                        <IconDownload size={16} />
+                      <Button variant="secondary" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
+                        <HugeiconsIcon icon={Download01Icon} size={16} />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
-                        <IconShare3 size={16} />
+                      <Button variant="secondary" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
+                        <HugeiconsIcon icon={Share03Icon} size={16} />
                       </Button>
                     </div>
 
@@ -170,10 +160,10 @@ export default function ClipsPage({ params }: ClipsPageProps) {
 
                   {/* Right Column: Floating Actions */}
                   <div className="flex flex-row lg:flex-col gap-3 shrink-0 lg:pt-2 w-full lg:w-auto overflow-x-auto lg:overflow-visible">
-                    <ActionButton icon={<IconPencil size={15} />} label="Rename" />
-                    <ActionButton icon={<IconCopy size={15} />} label="Duplicate" />
-                    <ActionButton icon={<IconTrash size={15} />} label="Delete" variant="danger" />
-                    <ActionButton icon={<IconScissors size={15} />} label="Trim" />
+                    <ActionButton icon={<HugeiconsIcon icon={Edit02Icon} size={15} />} label="Rename" variant="default" />
+                    <ActionButton icon={<HugeiconsIcon icon={Copy01Icon} size={15} />} label="Duplicate" variant="default" />
+                    <ActionButton icon={<HugeiconsIcon icon={Delete02Icon} size={15} />} label="Delete" variant="danger" />
+                    <ActionButton icon={<HugeiconsIcon icon={ScissorIcon} size={15} />} label="Cut" variant="default" />
                   </div>
 
                 </div>
@@ -188,14 +178,12 @@ export default function ClipsPage({ params }: ClipsPageProps) {
 
 function ActionButton({ icon, label, variant = "default" }: { icon: React.ReactNode, label: string, variant?: "default" | "danger" }) {
   return (
-    <button className={cn(
-      "flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-medium transition-all w-full lg:w-32 whitespace-nowrap",
-      variant === "danger"
-        ? "bg-card border-zinc-800 text-red-400 hover:bg-red-900/20 hover:border-red-900/50"
-        : "bg-card border-zinc-800 text-foreground hover:text-white"
-    )}>
+    <Button
+      variant={variant === "danger" ? "destructive" : "secondary"}
+      className="justify-start gap-3 w-full lg:w-32"
+    >
       {icon}
       <span>{label}</span>
-    </button>
+    </Button>
   )
 }

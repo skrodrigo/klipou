@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { DraggableEvent } from "@/components/draggable-event";
 import { DroppableCell } from "@/components/droppable-cell";
-import { EventGap, EventHeight } from "@/components/constants";
+import { EventGap, EventHeight } from "@/hooks/constants";
 import { EventItem } from "@/components/event-item";
 import {
   getAllEventsForDay,
@@ -27,7 +27,7 @@ import {
 } from "@/components/utils";
 import { useEventVisibility } from "@/components/use-event-visibility";
 import type { CalendarEvent } from "@/components/types";
-import { DefaultStartHour } from "@/components/constants";
+import { DefaultStartHour } from "@/hooks/constants";
 import {
   Popover,
   PopoverContent,

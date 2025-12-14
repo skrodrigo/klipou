@@ -26,7 +26,7 @@ import {
 import {
   EndHour,
   StartHour,
-} from "@/components/constants";
+} from "@/hooks/constants";
 import { cn } from "@/lib/utils";
 
 interface DayViewProps {

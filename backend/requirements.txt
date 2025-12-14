@@ -7,3 +7,4 @@ python-dotenv>=1.2.1
 requests>=2.31.0
 openai-whisper
 Pillow
+google-genai

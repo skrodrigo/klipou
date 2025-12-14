@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { MoreHorizontal, Scissors } from "lucide-react"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { listVideos } from "@/infra/videos/videos"
 import { Video } from "@/infra/videos/types/videos-types"
+import { Spinner } from "@/components/ui/spinner"
 
 export default function ProjectsPage() {
   const router = useRouter()
@@ -83,30 +83,8 @@ export default function ProjectsPage() {
     return (
       <div className="flex-1 p-12 overflow-y-auto">
         <h1 className="text-2xl mb-8 text-foreground">Projetos</h1>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {Array(3)
-            .fill(null)
-            .map((_, i) => (
-              <div
-                key={i}
-                className="group relative bg-card border border-border rounded-md overflow-hidden"
-              >
-                <div className="aspect-video bg-muted relative">
-                  <Skeleton className="w-full h-full rounded-none" />
-                </div>
-
-                <div className="p-4">
-                  <Skeleton className="h-3 w-24 mb-3" />
-                  <Skeleton className="h-4 w-full mb-2" />
-                  <Skeleton className="h-4 w-3/4 mb-4" />
-                  <div className="flex items-center justify-between mt-4">
-                    <Skeleton className="h-3 w-16" />
-                    <Skeleton className="h-4 w-4" />
-                  </div>
-                </div>
-              </div>
-            ))}
+        <div className="flex w-full justify-center items-center">
+          <Spinner />
         </div>
       </div>
     )
@@ -124,7 +102,7 @@ export default function ProjectsPage() {
             <div
               key={video.id}
               onClick={() => router.push(`/clips/${video.id}`)}
-              className="group relative bg-card border border-border rounded-md overflow-hidden transition-colors cursor-pointer hover:border-primary/50"
+              className="group relative bg-card rounded-md overflow-hidden transition-colors cursor-pointer hover:border-primary/50"
             >
               <div className="aspect-video bg-muted relative">
                 {video.thumbnail ? (
@@ -161,7 +139,7 @@ export default function ProjectsPage() {
                     {getStatusLabel(video.status)}
                   </span>
                   <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
+                    <DropdownMenuTrigger>
                       <button className="text-muted-foreground hover:text-foreground transition-colors">
                         <MoreHorizontal size={16} />
                       </button>

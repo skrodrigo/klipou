@@ -73,7 +73,7 @@ export default function VideoSettingsPage() {
 
           <div className="space-y-4">
             <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="border border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
                 <div className="flex items-center gap-3">
                   <Globe size={18} />
                   <SelectValue />
@@ -86,8 +86,12 @@ export default function VideoSettingsPage() {
               </SelectContent>
             </Select>
 
-            <Select value={ratio} onValueChange={setRatio}>
-              <SelectTrigger className="border border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+            <Select value={ratio} onValueChange={(value) => {
+              if (value) {
+                setRatio(value)
+              }
+            }}>
+              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
                 <div className="flex items-center gap-3">
                   <Layout size={18} />
                   <SelectValue />
@@ -100,8 +104,12 @@ export default function VideoSettingsPage() {
               </SelectContent>
             </Select>
 
-            <Select value={clipLength} onValueChange={setClipLength}>
-              <SelectTrigger className="border border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+            <Select value={clipLength} onValueChange={(value) => {
+              if (value) {
+                setClipLength(value)
+              }
+            }}>
+              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
                 <div className="flex items-center gap-3">
                   <Clock size={18} />
                   <SelectValue />

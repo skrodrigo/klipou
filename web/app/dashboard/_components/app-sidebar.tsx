@@ -36,7 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useUpgradeDialog } from "@/contexts/upgrade-dialog-context"
-import { sampleProjects } from "@/lib/sample-projects"
+import { sampleProjects } from "@/lib/events/sample-projects"
 
 type CommandOption = {
   label: string
@@ -109,9 +109,9 @@ export function AppSidebar() {
       <Sidebar>
         <SidebarHeader className="space-y-4">
           <div className="flex justify-between items-center">
-            <Image src='/logos/klipou.svg' alt="logo" width={100} height={100} className="mt-6 w-10" />
+            <Image src='/logos/klipai.svg' alt="logo" width={100} height={100} className="mt-6 w-10" />
             <DropdownMenu >
-              <DropdownMenuTrigger asChild className="flex pt-4 justify-end items-end">
+              <DropdownMenuTrigger className="flex pt-4 justify-end items-end">
                 <div>
                   <Avatar className="cursor-pointer h-10 w-10">
                     <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="Rodrigo" />
@@ -150,11 +150,11 @@ export function AppSidebar() {
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="space-y-2">
                 {nav.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild >
-                      <a href={item.url} className="flex justify-start items-center">
+                    <SidebarMenuButton  >
+                      <a href={item.url} className="flex justify-start gap-2 items-center">
                         <item.icon />
                         <span >{item.title}</span>
                       </a>

@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: klipou
-      POSTGRES_USER: klipou
-      POSTGRES_PASSWORD: klipou
+      POSTGRES_DB: klipai
+      POSTGRES_USER: klipai
+      POSTGRES_PASSWORD: klipai
     ports:
       - "5432:5432"
 

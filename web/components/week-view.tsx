@@ -25,7 +25,7 @@ import { DroppableCell } from "@/components/droppable-cell";
 import { EventItem } from "@/components/event-item";
 import { isMultiDayEvent } from "@/components/utils";
 import { useCurrentTimeIndicator } from "@/components/use-current-time-indicator";
-import { WeekCellsHeight, EndHour, StartHour } from "@/components/constants";
+import { WeekCellsHeight, EndHour, StartHour } from "@/hooks/constants";
 import { cn } from "@/lib/utils";
 
 interface WeekViewProps {

@@ -22,7 +22,7 @@ export const sampleProjects: ProjectSummary[] = [
   },
   {
     id: "proj-2",
-    title: "Lançamento do curso klipou",
+    title: "Lançamento do curso klipai",
     description: "Sequência de vídeos para funil pago e orgânico",
     lastUpdated: "Ontem",
     status: "completed",

@@ -1,19 +1,19 @@
-Setup Produção — klipou
+Setup Produção — klipai
 
 Estrutura
 c:\Users\r\codes\
-├── klipou/
+├── klipai/
 │   ├── backend/          # Django (venv)
 │   ├── web/              # Next.js (pnpm)
 │   └── docker-compose.yml
 
 1. Subir Docker (PostgreSQL + RabbitMQ)
-cd klipou
+cd klipai
 docker compose up -d
 docker compose ps
 
 2. Backend (venv)
-cd klipou/backend
+cd klipai/backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -36,7 +36,7 @@ Ou Whisper C++ (mais rápido):
 pip install whispercpp
 
 5. Migrations
-cd klipou/backend
+cd klipai/backend
 source venv/bin/activate
 python manage.py makemigrations
 python manage.py migrate
@@ -45,7 +45,7 @@ python manage.py migrate
 
 backend/.env:
 
-DATABASE_URL=postgres://klipou:klipou@localhost:5432/klipou
+DATABASE_URL=postgres://klipai:klipai@localhost:5432/klipai
 
 CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
 CELERY_RESULT_BACKEND=rpc://
@@ -64,17 +64,17 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 
 7. Iniciar Serviços
 Backend
-cd klipou/backend
+cd klipai/backend
 source venv/bin/activate
 python manage.py runserver
 
 Celery Worker
-cd klipou/backend
+cd klipai/backend
 source venv/bin/activate
 celery -A core worker -l info
 
 Frontend
-cd klipou/web
+cd klipai/web
 pnpm install
 pnpm dev
 

@@ -71,9 +71,9 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME', 'klipou'),
-            'USER': os.getenv('DB_USER', 'klipou'),
-            'PASSWORD': os.getenv('DB_PASSWORD', 'klipou'),
+            'NAME': os.getenv('DB_NAME', 'klipai'),
+            'USER': os.getenv('DB_USER', 'klipai'),
+            'PASSWORD': os.getenv('DB_PASSWORD', 'klipai'),
             'HOST': os.getenv('DB_HOST', 'localhost'),
             'PORT': os.getenv('DB_PORT', '5432'),
         }

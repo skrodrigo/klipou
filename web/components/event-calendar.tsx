@@ -28,7 +28,7 @@ import {
   EventGap,
   EventHeight,
   WeekCellsHeight,
-} from "@/components/constants";
+} from "@/hooks/constants";
 import { DayView } from "@/components/day-view";
 import { EventDialog } from "@/components/event-dialog";
 import { MonthView } from "@/components/month-view";

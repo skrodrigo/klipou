@@ -77,7 +77,7 @@ export default function DashboardPage() {
               return (
                 <div
                   key={file.name + file.size + idx}
-                  className="relative group rounded-md overflow-hidden border border-border w-24 h-24"
+                  className="relative group  rounded-md overflow-hidden border border-border w-24 h-24"
                 >
                   <video
                     src={videoUrl}
@@ -107,13 +107,13 @@ export default function DashboardPage() {
           <div
             className={cn(
               "relative rounded-md transition-all flex-1",
-              isDragging ? "" : "border-border bg-input"
+              isDragging ? "" : "border-border"
             )}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <div className="flex gap-3 items-center px-4 h-12">
+            <div className="flex gap-3 items-center h-12">
               <input
                 hidden
                 onChange={handleFileChange}
@@ -124,13 +124,13 @@ export default function DashboardPage() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="text-muted-foreground hover:text-foreground transition-colors"
+                className="text-muted-foreground border rounded-full p-3 border-border hover:text-foreground transition-colors"
               >
                 <Paperclip className="h-5 w-5" />
               </button>
               <Input
                 placeholder="Paste link or drag your video here"
-                className="flex-1 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground"
+                className="flex-1 focus-visible:ring-0 h-12 focus-visible:ring-offset-0 placeholder:text-muted-foreground"
               />
             </div>
           </div>
