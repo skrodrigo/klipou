@@ -19,16 +19,25 @@ def register_view(request: HttpRequest) -> JsonResponse:
 
     email = body.get("email")
     password = body.get("password")
+    organization_name = body.get("organization_name")
 
     if not email or not password:
         return JsonResponse({"detail": "'email' and 'password' are required"}, status=400)
 
-    user, error = register_service(email=email, password=password)
+    user, error, organization_data = register_service(
+        email=email,
+        password=password,
+        organization_name=organization_name
+    )
     if error is not None or user is None:
         return JsonResponse({"detail": error or "Invalid data"}, status=400)
 
     login(request, user)
     return JsonResponse(
-        {"detail": "User registered successfully", "email": user.email},
+        {
+            "detail": "User registered successfully",
+            "email": user.email,
+            "organization": organization_data,
+        },
         status=201,
     )

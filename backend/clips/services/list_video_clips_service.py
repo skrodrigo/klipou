@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-from ..models import VideoClip
+from ..models import Clip
 
 
 def list_video_clips(video_id: int) -> List[Dict[str, Any]]:
@@ -13,7 +13,7 @@ def list_video_clips(video_id: int) -> List[Dict[str, Any]]:
     Returns:
         Lista de dicts com id, title, created_at, video_id
     """
-    clips_qs = VideoClip.objects.filter(video_id=video_id).order_by("-created_at")
+    clips_qs = Clip.objects.filter(video_id=video_id).order_by("-created_at")
     return [
         {
             "id": clip.id,

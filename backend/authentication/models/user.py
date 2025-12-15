@@ -25,6 +25,14 @@ class CustomUser(AbstractBaseUser):
     is_active = models.BooleanField(default=True)
     is_admin = models.BooleanField(default=False)
     
+    # Onboarding
+    onboarding_completed = models.BooleanField(default=False)
+    onboarding_data = models.JSONField(default=dict, blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True)
+    
     objects = CustomUserManager()
     
     USERNAME_FIELD = 'email'
