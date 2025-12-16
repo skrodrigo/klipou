@@ -28,7 +28,7 @@ class Video(models.Model):
     ]
 
     # Identificadores
-    video_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    video_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization_id = models.UUIDField(null=True, blank=True)  # FK para Organization (futuro)
     user_id = models.UUIDField(null=True, blank=True)  # FK para User (futuro)
 
@@ -47,7 +47,6 @@ class Video(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="ingestion")
     duration = models.FloatField(null=True, blank=True)  # Duração em segundos
     resolution = models.CharField(max_length=20, null=True, blank=True)  # Ex: 1920x1080
-    thumbnail = models.TextField(null=True, blank=True)  # Base64 ou URL do R2
     thumbnail_storage_path = models.CharField(max_length=500, null=True, blank=True)  # Caminho no R2
 
     # Job tracking

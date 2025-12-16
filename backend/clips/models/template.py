@@ -15,7 +15,7 @@ class Template(models.Model):
     ]
 
     # Identificadores
-    template_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    template_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     # Configuração
     name = models.CharField(max_length=255)

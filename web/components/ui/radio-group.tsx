@@ -17,7 +17,7 @@ function RadioGroup({ className, ...props }: RadioGroupPrimitive.Props) {
   )
 }
 
-function RadioGroupItem({ className, ...props }: RadioPrimitive.Root.Props) {
+function RadioGroupItem({ className, indicatorClassName, ...props }: RadioPrimitive.Root.Props & { indicatorClassName?: string }) {
   return (
     <RadioPrimitive.Root
       data-slot="radio-group-item"
@@ -29,7 +29,10 @@ function RadioGroupItem({ className, ...props }: RadioPrimitive.Root.Props) {
     >
       <RadioPrimitive.Indicator
         data-slot="radio-group-indicator"
-        className="group-aria-invalid/radio-group-item:text-destructive text-primary flex size-4 items-center justify-center"
+        className={cn(
+          "group-aria-invalid/radio-group-item:text-destructive text-primary flex size-4 items-center justify-center",
+          indicatorClassName
+        )}
       >
         <HugeiconsIcon icon={CircleIcon} strokeWidth={2} className="absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 fill-current" />
       </RadioPrimitive.Indicator>

@@ -5,6 +5,10 @@ import type {
   LoginResponse,
   RegisterPayload,
   RegisterResponse,
+  UpdateProfilePayload,
+  UpdateProfileResponse,
+  OnboardingData,
+  Organization,
 } from "./types/auth-types";
 
 export type {
@@ -13,6 +17,10 @@ export type {
   LoginResponse,
   RegisterPayload,
   RegisterResponse,
+  UpdateProfilePayload,
+  UpdateProfileResponse,
+  OnboardingData,
+  Organization,
 };
 
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
@@ -41,4 +49,11 @@ export async function getSession(): Promise<User | null> {
   } catch {
     return null;
   }
+}
+
+export async function updateProfile(payload: UpdateProfilePayload): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>("/api/auth/me/update/", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }

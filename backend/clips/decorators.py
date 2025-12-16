@@ -36,7 +36,11 @@ def require_credits(view_func):
             video = Video.objects.get(video_id=video_id)
 
             # Calcula créditos necessários (1 crédito = 1 minuto)
-            credits_needed = int(video.duration / 60) + (1 if video.duration % 60 > 0 else 0)
+            # Se duração não foi preenchida, usa valor padrão de 5 créditos
+            if video.duration:
+                credits_needed = int(video.duration / 60) + (1 if video.duration % 60 > 0 else 0)
+            else:
+                credits_needed = 5  # Valor padrão para vídeos sem duração conhecida
 
             # Valida créditos disponíveis
             if org.credits_available < credits_needed:
@@ -232,7 +236,7 @@ def refund_credits_on_failure(view_func):
 
                         # Registra transação
                         CreditTransaction.objects.create(
-                            organization=org,
+                            organization_id=org.organization_id,
                             job_id=job.job_id,
                             amount=-credits_to_refund,  # Negativo = estorno
                             type="refund",

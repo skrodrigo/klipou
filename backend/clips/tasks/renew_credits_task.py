@@ -42,7 +42,7 @@ def renew_credits_task() -> dict:
             try:
                 # Verifica se já foi renovado hoje
                 last_renewal = CreditTransaction.objects.filter(
-                    organization=org,
+                    organization_id=org.organization_id,
                     type="monthly_renewal",
                     created_at__date=today,
                 ).first()
@@ -64,7 +64,7 @@ def renew_credits_task() -> dict:
 
                 # Registra transação
                 CreditTransaction.objects.create(
-                    organization=org,
+                    organization_id=org.organization_id,
                     amount=monthly_credits,
                     type="monthly_renewal",
                     reason=f"Renovação mensal - Plano {plan}",

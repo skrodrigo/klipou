@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
+import { useQuery } from "@tanstack/react-query"
 
 import {
   DropdownMenu,
@@ -10,7 +11,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -19,31 +19,39 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { ArrowDown01Icon, AudioWave01Icon, CommandIcon, GooglePhotosIcon, PlusSignIcon } from "@hugeicons/core-free-icons"
+import { UnfoldMoreIcon, PlusSignIcon } from "@hugeicons/core-free-icons"
+import { getSession } from "@/infra/auth/auth"
 
-const teams = [
-  {
-    name: "Acme Inc",
-    logo: GooglePhotosIcon,
-    plan: "Enterprise",
-  },
-  {
-    name: "Acme Corp.",
-    logo: AudioWave01Icon,
-    plan: "Startup",
-  },
-  {
-    name: "Evil Corp.",
-    logo: CommandIcon,
-    plan: "Free",
-  },
-]
+type Organization = {
+  organization_id: string
+  name: string
+  color: string
+  plan: "starter" | "pro" | "business"
+  credits_available: number
+}
 
 export function TeamSwitcher() {
   const { isMobile } = useSidebar()
-  const [activeTeam, setActiveTeam] = React.useState(teams[0])
+  const [activeOrganization, setActiveOrganization] = React.useState<Organization | null>(null)
 
-  if (!activeTeam) {
+  const { data: user } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: getSession,
+  })
+
+  React.useEffect(() => {
+    if (user?.organization) {
+      setActiveOrganization({
+        organization_id: user.organization.organization_id,
+        name: user.organization.name,
+        color: user.organization.color,
+        plan: user.organization.plan,
+        credits_available: user.organization.credits_available,
+      })
+    }
+  }, [user?.organization?.organization_id])
+
+  if (!activeOrganization) {
     return null
   }
 
@@ -54,16 +62,18 @@ export function TeamSwitcher() {
           <DropdownMenuTrigger asChild className='w-full'>
             <SidebarMenuButton
               size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              className="data-[state=open]:bg-sidebar-accent border data-[state=open]:text-sidebar-accent-foreground"
             >
-              <div className="bg-muted   border border-border text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-md">
-                <HugeiconsIcon icon={activeTeam.logo} className="size-4" />
+              <div
+                className="border border-border text-white flex aspect-square size-8 items-center justify-center rounded-md"
+                style={{ backgroundColor: activeOrganization.color }}
+              >
+                <span className="text-xs font-bold">{activeOrganization.name.charAt(0).toUpperCase()}</span>
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{activeTeam.name}</span>
-                <span className="truncate text-xs">{activeTeam.plan}</span>
+                <span className="truncate font-medium">{activeOrganization.name}</span>
               </div>
-              <HugeiconsIcon icon={ArrowDown01Icon} className="ml-auto size-4" />
+              <HugeiconsIcon icon={UnfoldMoreIcon} className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -74,28 +84,30 @@ export function TeamSwitcher() {
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-muted-foreground text-xs">
-                Teams
+                Organização
               </DropdownMenuLabel>
-              {teams.map((team, index) => (
-                <DropdownMenuItem
-                  key={team.name}
-                  onClick={() => setActiveTeam(team)}
-                  className="gap-2 p-2"
+              <DropdownMenuItem
+                className="gap-2 p-2"
+                disabled
+              >
+                <div
+                  className="flex size-6 items-center justify-center rounded-md border text-white"
+                  style={{ backgroundColor: activeOrganization.color }}
                 >
-                  <div className="flex size-6 items-center justify-center rounded-md border">
-                    <HugeiconsIcon icon={team.logo} className="size-3.5 shrink-0" />
-                  </div>
-                  {team.name}
-                  <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              ))}
+                  <span className="text-xs font-bold">{activeOrganization.name.charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="flex flex-col flex-1">
+                  <span className="font-medium">{activeOrganization.name}</span>
+                  <span className="text-xs text-muted-foreground">{activeOrganization.credits_available} créditos</span>
+                </div>
+              </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="gap-2 p-2">
               <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                 <HugeiconsIcon icon={PlusSignIcon} className="size-4" />
               </div>
-              <div className="text-muted-foreground font-medium">Add team</div>
+              <div className="text-muted-foreground font-medium">Criar organização</div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -9,6 +9,7 @@ from celery import shared_task
 from django.conf import settings
 
 from ..models import Video, Transcript
+from .job_utils import update_job_status
 
 
 @shared_task(bind=True, max_retries=5)
@@ -22,7 +23,13 @@ def select_clips_task(self, video_id: int) -> dict:
     Seleciona Top N clips respeitando num_clips.
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Procura vídeo por video_id (UUID)
+        video = Video.objects.get(video_id=video_id)
+        
+        # Obtém organização
+        from ..models import Organization
+        org = Organization.objects.get(organization_id=video.organization_id)
+        
         video.status = "selecting"
         video.current_step = "selecting"
         video.save()
@@ -56,11 +63,28 @@ def select_clips_task(self, video_id: int) -> dict:
 
         # Atualiza vídeo
         video.last_successful_step = "selecting"
+        video.status = "reframing"
+        video.current_step = "reframing"
         video.save()
+        
+        # Atualiza job status
+        update_job_status(str(video.video_id), "reframing", progress=70, current_step="reframing")
+
+        # Dispara próxima task (reframing)
+        try:
+            from .reframe_video_task import reframe_video_task
+            task = reframe_video_task.apply_async(
+                args=[str(video.video_id)],
+                queue=f"video.reframe.{org.plan}",
+            )
+            print(f"[select_clips_task] Disparou reframe_video_task: {task.id}")
+        except Exception as e:
+            print(f"[select_clips_task] Erro ao disparar reframe_video_task: {e}")
+            raise
 
         return {
-            "video_id": video_id,
-            "status": "selecting",
+            "video_id": str(video.video_id),
+            "status": "reframing",
             "selected_clips_count": len(selected_clips),
             "candidates_count": len(candidates),
         }

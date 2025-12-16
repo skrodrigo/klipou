@@ -18,7 +18,7 @@ class Integration(models.Model):
     ]
 
     # Identificadores
-    integration_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    integration_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="integrations")
 
     # Plataforma

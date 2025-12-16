@@ -1,126 +1,225 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { requestSSE } from "@/infra/http"
+import { getJobProgress, getJobStatus, createJob, type CreateJobPayload } from "@/infra/videos/videos"
+import { uploadVideo } from "@/infra/videos/upload"
 import { useVideoStore } from "@/lib/store/video-store"
 import { cn } from "@/lib/utils"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { AlertSquareIcon, SquareIcon, LogoutSquare02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { AlertSquareIcon, SquareIcon, LogoutSquare02Icon, Tick02Icon, Loading03Icon, CancelSquareIcon, FlowSquareIcon } from "@hugeicons/core-free-icons"
+import { toast } from "sonner"
+import { getSession } from "@/infra/auth/auth"
+import { useQuery } from "@tanstack/react-query"
 
-type ProcessingStatus = "queue" | "sending" | "creating" | "hunting" | "completed" | "failed"
+type ProcessingStatus = "ingestion" | "queued" | "downloading" | "normalizing" | "transcribing" | "analyzing" | "embedding" | "selecting" | "reframing" | "clipping" | "captioning" | "done" | "failed"
 
 interface StatusMessage {
   status: ProcessingStatus
   progress: number
-  queue_position?: number
-  error?: string
-  failed_stage?: ProcessingStatus
+  current_step?: string
+  error_message?: string
 }
 
 export default function ProcessingPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [progress, setProgress] = useState(0)
-  const [status, setStatus] = useState<ProcessingStatus>("queue")
-  const [queuePosition, setQueuePosition] = useState<number | null>(null)
+  const [status, setStatus] = useState<ProcessingStatus>("queued")
+  const [jobId, setJobId] = useState<string | null>(null)
   const [videoId, setVideoId] = useState<string | null>(null)
+  const [config, setConfig] = useState<any>(null)
   const { videoFile, videoUrl } = useVideoStore()
   const videoTitle = videoFile?.name || "Seu vídeo"
   const [error, setError] = useState<string | null>(null)
-  const [failedStage, setFailedStage] = useState<ProcessingStatus | null>(null)
   const [thumbnail, setThumbnail] = useState<string | null>(null)
+  const [isCreatingJob, setIsCreatingJob] = useState(false)
+  const [isUploadComplete, setIsUploadComplete] = useState(false)
+  const [isUploading, setIsUploading] = useState(true)
+
+  const { data: user } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: getSession,
+  })
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("videoId");
-    if (id) {
-      setVideoId(id);
-      fetch(`/api/videos/${id}/`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.thumbnail) {
-            setThumbnail(data.thumbnail);
-          }
-        })
-        .catch(err => console.error("Error fetching video:", err));
+    const vid = searchParams.get("videoId");
+    const configStr = searchParams.get("config");
+
+    if (vid) {
+      setVideoId(vid);
     }
-  }, []);
+    if (configStr) {
+      try {
+        setConfig(JSON.parse(decodeURIComponent(configStr)));
+      } catch (err) {
+        console.error("Erro ao parsear config:", err);
+      }
+    }
+  }, [searchParams]);
+
+  // Step 1: Faz upload do vídeo
+  useEffect(() => {
+    if (!videoId || !videoFile || isUploadComplete) {
+      return;
+    }
+
+    const performUpload = async () => {
+      try {
+        setIsUploading(true);
+        await uploadVideo(videoFile, videoId);
+        setIsUploadComplete(true);
+        setIsUploading(false);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao fazer upload do vídeo");
+        setIsUploading(false);
+      }
+    };
+
+    performUpload();
+  }, [videoId, videoFile, isUploadComplete]);
+
+  // Step 2: Cria o job após upload bem-sucedido
+  useEffect(() => {
+    if (!videoId || !config || !user || isCreatingJob || jobId || !isUploadComplete) {
+      return;
+    }
+
+    const createJobAfterUpload = async () => {
+      setIsCreatingJob(true);
+      try {
+        const jobPayload: CreateJobPayload = {
+          video_id: videoId,
+          organization_id: user.organization_id || "",
+          user_id: String(user.user_id),
+          configuration: {
+            language: config.language,
+            target_ratios: [config.ratio],
+            max_clip_duration: config.maxDuration,
+            num_clips: 5,
+            auto_schedule: config.autoSchedule,
+          },
+        };
+
+        const jobResponse = await createJob(jobPayload);
+        setJobId(jobResponse.job_id);
+        console.log("Job criado com sucesso:", jobResponse.job_id);
+      } catch (err) {
+        console.error("Erro ao criar job:", err);
+        toast.error(err instanceof Error ? err.message : "Erro ao criar job");
+        setError("Erro ao criar job");
+      } finally {
+        setIsCreatingJob(false);
+      }
+    };
+
+    createJobAfterUpload();
+  }, [videoId, config, user, isCreatingJob, jobId, isUploadComplete]);
 
   useEffect(() => {
-    if (!videoId) {
+    if (!jobId) {
       return;
     }
 
     let isClosing = false;
-    const eventSource = requestSSE(`/api/videos/${videoId}/progress/`);
+    let retries = 0;
+    const maxRetries = 10;
+    const retryDelay = 500;
+    const initialDelay = 5000;
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data: StatusMessage = JSON.parse(event.data);
-        setStatus(data.status);
-        setProgress(data.progress);
-        if (data.queue_position !== undefined) {
-          setQueuePosition(data.queue_position);
-        }
+    const connectToSSE = () => {
+      const eventSource = getJobProgress(jobId);
 
-        if (data.status === "completed") {
-          isClosing = true;
-          setTimeout(() => {
+      if (!eventSource) {
+        setError("Não foi possível conectar ao servidor.");
+        return;
+      }
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data: StatusMessage = JSON.parse(event.data);
+
+          if (status !== "done" && status !== "failed") {
+            setStatus(data.status);
+            setProgress(data.progress);
+          }
+
+          if (data.status === "done") {
+            isClosing = true;
+            setStatus("done");
+            setProgress(100);
+            setTimeout(() => {
+              eventSource.close();
+              router.push("/dashboard/projects");
+            }, 2000);
+          } else if (data.status === "failed") {
+            isClosing = true;
+            setStatus("failed");
+            setError(data.error_message || "O processamento falhou. Por favor, tente novamente.");
             eventSource.close();
-            router.push("/dashboard/projects");
-          }, 2000);
-        } else if (data.status === "failed") {
-          isClosing = true;
-          setError(data.error || "O processamento falhou. Por favor, tente novamente.");
-          setFailedStage(data.failed_stage || null);
-          eventSource.close();
+          }
+        } catch (e) {
+          console.error("Error parsing SSE message:", e);
         }
-      } catch (e) {
-        console.error("Error parsing SSE message:", e);
-      }
+      };
+
+      eventSource.onerror = (event: any) => {
+        if (!isClosing) {
+          if (event.status === 404 && retries < maxRetries) {
+            retries++;
+            eventSource.close();
+            setTimeout(connectToSSE, retryDelay);
+          } else {
+            setError("Ocorreu um erro ao conectar com o servidor. Por favor, tente novamente.");
+            eventSource.close();
+          }
+        }
+      };
     };
 
-    eventSource.onerror = () => {
-      if (!isClosing) {
-        setError("Ocorreu um erro ao conectar com o servidor. Por favor, tente novamente.");
-      }
-      eventSource.close();
-    };
+    const initialTimer = setTimeout(connectToSSE, initialDelay);
 
     return () => {
-      eventSource.close();
+      isClosing = true;
+      clearTimeout(initialTimer);
     };
-  }, [videoId, router]);
+  }, [jobId, router, status]);
 
-  const getStatusLabel = () => {
-    if (status === "queue" && queuePosition) {
-      return `${queuePosition} in queue`
-    }
-    switch (status) {
-      case "sending":
-        return "Enviando..."
-      case "creating":
-        return "Criando seu projeto"
-      case "hunting":
-        return "Caçando as melhores partes"
-      case "completed":
-        return "Concluído"
-      case "failed":
-        return "Falhou"
-      default:
-        return "Next in queue"
-    }
-  }
+  const stages: ProcessingStatus[] = [
+    "queued",
+    "downloading",
+    "normalizing",
+    "transcribing",
+    "analyzing",
+    "embedding",
+    "selecting",
+    "reframing",
+    "clipping",
+    "captioning",
+  ];
 
-  const stages: ProcessingStatus[] = ["queue", "sending", "creating", "hunting"];
+  const getUploadState = (): 'completed' | 'active' | 'pending' => {
+    if (isUploadComplete) return 'completed';
+    if (isUploading) return 'active';
+    return 'pending';
+  };
 
   const getStageState = (stage: ProcessingStatus): 'completed' | 'active' | 'pending' | 'failed' => {
     const stageIndex = stages.indexOf(stage);
 
-    if (failedStage) {
-      const failedIndex = stages.indexOf(failedStage);
-      if (stageIndex < failedIndex) return 'completed';
+    // Se upload não completou, todos os stages ficam pending
+    if (!isUploadComplete) {
+      return 'pending';
+    }
+
+    if (status === "done") {
+      return 'completed';
+    }
+
+    if (status === "failed") {
+      const statusIndex = stages.indexOf(status);
+      if (stageIndex < statusIndex) return 'completed';
       return 'failed';
     }
 
@@ -128,6 +227,11 @@ export default function ProcessingPage() {
     if (stageIndex < statusIndex) return 'completed';
     if (stageIndex === statusIndex) return 'active';
     return 'pending';
+  };
+
+  const getFailedStageIndex = (): number => {
+    if (!error || status === "done") return -1;
+    return stages.indexOf(status);
   };
 
   return (
@@ -157,39 +261,63 @@ export default function ProcessingPage() {
             </div>
           </div>
 
-          {/* Info Text */}
-          <p className="text-start text-muted-foreground">
-            Você já pode sair dessa página!
-          </p>
-
           {/* Status List */}
           <div className="space-y-3">
-            {[{
-              stage: "queue",
-              label: "Next in queue",
-              failedLabel: "Falha na fila"
-            }, {
-              stage: "sending",
-              label: "Gerando Clipes",
-              failedLabel: "Erro ao gerar clipes"
-            }, {
-              stage: "creating",
-              label: "Criando seu projeto",
-              failedLabel: "Não foi possível criar o projeto"
-            }, {
-              stage: "hunting",
-              label: "Buscando melhores clipes",
-              failedLabel: "Erro ao buscar clipes"
-            }].map(({ stage, label, failedLabel }) => {
-              const state = getStageState(stage as ProcessingStatus);
+            {/* Upload Stage */}
+            <div className="flex items-center gap-3">
+              {getUploadState() === 'completed' ? (
+                <HugeiconsIcon size={16} icon={Tick02Icon} className='text-primary' />
+              ) : getUploadState() === 'active' ? (
+                <HugeiconsIcon size={16} icon={Loading03Icon} className='animate-spin text-foreground' />
+              ) : (
+                <HugeiconsIcon size={16} icon={SquareIcon} className='text-muted-foreground' />
+              )}
+              <span className={cn(
+                "text-sm",
+                getUploadState() === 'completed' && "text-muted-foreground line-through",
+                getUploadState() === 'active' && "text-foreground font-medium",
+                getUploadState() === 'pending' && "text-muted-foreground",
+              )}>
+                Enviando vídeo{getUploadState() === 'active' && <span className='ml-1'>...</span>}
+              </span>
+            </div>
+
+            {[
+              { stage: "queued" as ProcessingStatus, label: "Na fila" },
+              { stage: "downloading" as ProcessingStatus, label: "Preparando o vídeo" },
+              { stage: "normalizing" as ProcessingStatus, label: "Fazendo ajustes" },
+              { stage: "transcribing" as ProcessingStatus, label: "Transformando e Entendendo" },
+              { stage: "analyzing" as ProcessingStatus, label: "Analisando conteúdo" },
+              { stage: "embedding" as ProcessingStatus, label: "Indexando o conteúdo" },
+              { stage: "selecting" as ProcessingStatus, label: "Selecionando melhores trechos" },
+              { stage: "reframing" as ProcessingStatus, label: "Reenquadrando vídeo" },
+              { stage: "clipping" as ProcessingStatus, label: "Gerando clips" },
+              { stage: "captioning" as ProcessingStatus, label: "Gerando legendas" },
+            ].map(({ stage, label }, idx) => {
+              const state = getStageState(stage);
+              const failedIdx = getFailedStageIndex();
+              const isFailedStage = error && failedIdx === idx;
+              const isAfterFailed = error && failedIdx !== -1 && idx > failedIdx;
+              const [dots, setDots] = useState('.');
+
+              useEffect(() => {
+                if (state !== 'active') return;
+                const interval = setInterval(() => {
+                  setDots(prev => prev.length >= 3 ? '.' : prev + '.');
+                }, 500);
+                return () => clearInterval(interval);
+              }, [state]);
+
               return (
                 <div key={stage} className="flex items-center gap-3">
-                  {state === 'failed' ? (
-                    <HugeiconsIcon size={16} icon={AlertSquareIcon} className='text-destructive' />
+                  {isFailedStage ? (
+                    <HugeiconsIcon size={16} icon={CancelSquareIcon} className='text-destructive' />
+                  ) : isAfterFailed ? (
+                    <HugeiconsIcon size={16} icon={AlertSquareIcon} className='text-muted-foreground' />
                   ) : state === 'completed' ? (
                     <HugeiconsIcon size={16} icon={Tick02Icon} className='text-primary' />
                   ) : state === 'active' ? (
-                    <HugeiconsIcon size={16} icon={AlertSquareIcon} className='animate-spin text-foreground' />
+                    <HugeiconsIcon size={16} icon={Loading03Icon} className='animate-spin text-foreground' />
                   ) : (
                     <HugeiconsIcon size={16} icon={SquareIcon} className='text-muted-foreground' />
                   )}
@@ -197,10 +325,11 @@ export default function ProcessingPage() {
                     "text-sm",
                     state === 'completed' && "text-muted-foreground line-through",
                     state === 'active' && "text-foreground font-medium",
-                    state === 'pending' && "text-muted-foreground",
-                    state === 'failed' && "text-destructive font-semibold",
+                    isFailedStage && "text-destructive font-semibold",
+                    isAfterFailed && "text-foreground",
+                    !isFailedStage && !isAfterFailed && state === 'pending' && "text-muted-foreground",
                   )}>
-                    {state === 'failed' ? failedLabel : label}
+                    {label}{state === 'active' && !error && <span className='ml-1'>{dots}</span>}
                   </span>
                 </div>
               );
@@ -211,7 +340,7 @@ export default function ProcessingPage() {
             onClick={() => router.push("/dashboard/projects")}
             className=" bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors"
           >
-            <HugeiconsIcon size={16} icon={LogoutSquare02Icon} className='text-destructive' />
+            <HugeiconsIcon size={16} icon={LogoutSquare02Icon} strokeWidth={2} className='text-background' />
             Ir para Projetos
           </Button>
         </div>

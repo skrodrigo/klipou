@@ -9,7 +9,7 @@ from .video import Video
 
 class Transcript(models.Model):
     # Identificadores
-    transcript_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    transcript_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     video = models.OneToOneField(Video, on_delete=models.CASCADE, related_name="transcript")
 
     # Conteúdo
@@ -39,7 +39,7 @@ class Transcript(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["video_id"]),
+            models.Index(fields=["video"]),
             models.Index(fields=["language"]),
         ]
 

@@ -43,7 +43,8 @@ app.conf.task_queues = {
     "video.select.pro": {"exchange": "video", "routing_key": "select.pro", "priority": 5},
     "video.select.business": {"exchange": "video", "routing_key": "select.business", "priority": 10},
     
-    # Reframe (apenas Pro e Business)
+    # Reframe (por plano)
+    "video.reframe.starter": {"exchange": "video", "routing_key": "reframe.starter", "priority": 1},
     "video.reframe.pro": {"exchange": "video", "routing_key": "reframe.pro", "priority": 5},
     "video.reframe.business": {"exchange": "video", "routing_key": "reframe.business", "priority": 10},
     

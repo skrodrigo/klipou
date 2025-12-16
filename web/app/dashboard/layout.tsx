@@ -10,7 +10,7 @@ export default function DashboardLayout({
     <SidebarProvider>
       <AppSidebar />
       <main className="flex-1">
-        <SidebarTrigger className="absolute z-50 " />
+        <SidebarTrigger className="absolute z-50" />
         {children}
       </main>
     </SidebarProvider>

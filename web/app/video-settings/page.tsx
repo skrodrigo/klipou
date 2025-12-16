@@ -9,12 +9,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { createVideo } from "@/infra/videos/videos"
 import { useVideoStore } from "@/lib/store/video-store"
 import { AlertSquareIcon, ArrowLeft02Icon, AspectRatioIcon, Calendar01Icon, Clock01Icon, Globe02Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { toast } from "sonner"
+import { useQuery } from "@tanstack/react-query"
+import { getSession } from "@/infra/auth/auth"
 
 export default function VideoSettingsPage() {
   const router = useRouter()
@@ -24,19 +26,52 @@ export default function VideoSettingsPage() {
   const [autoSchedule, setAutoSchedule] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [language, setLanguage] = useState<string>("pt-br")
+  const [videoDuration, setVideoDuration] = useState(0)
 
+  const { data: user } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: getSession,
+  })
+
+  // Captura a duração do vídeo quando ele é carregado
+  useEffect(() => {
+    if (!videoUrl) return
+
+    const video = document.createElement('video')
+
+    const handleLoadedMetadata = () => {
+      setVideoDuration(Math.ceil(video.duration))
+    }
+
+    video.addEventListener('loadedmetadata', handleLoadedMetadata)
+    video.src = videoUrl
+
+    return () => {
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+    }
+  }, [videoUrl])
 
   const handleSend = async () => {
-    if (isSubmitting || !videoFile) return
+    if (isSubmitting || !videoFile || !user) return
 
     setIsSubmitting(true)
     try {
-      const response = await createVideo(videoFile)
-      const videoId = response?.id || null
+      const [, maxDuration] = clipLength.split("-").map(Number)
+      const videoId = crypto.randomUUID()
 
-      router.push(`/processing${videoId ? `?videoId=${videoId}` : ""}`)
+      const config = {
+        language,
+        ratio,
+        maxDuration,
+        autoSchedule,
+      }
+
+      router.push(
+        `/processing?videoId=${videoId}&config=${encodeURIComponent(JSON.stringify(config))}`
+      )
     } catch (error) {
-      console.error("Error creating video:", error)
+      console.error("Error:", error)
+      toast.error(error instanceof Error ? error.message : "Erro ao processar")
       setIsSubmitting(false)
     }
   }
@@ -47,6 +82,11 @@ export default function VideoSettingsPage() {
       return name.length > 50 ? `${name.slice(0, 60)}...` : name
     }
     return "Vídeo"
+  }
+
+  const calculateCredits = (): number => {
+    if (videoDuration === 0) return 0
+    return Math.ceil(videoDuration / 60)
   }
 
   return (
@@ -74,16 +114,15 @@ export default function VideoSettingsPage() {
           </div>
 
           <div className="space-y-4">
-            <Select
-              value={language}
-              onValueChange={(value) => {
-                if (value) setLanguage(value)
-              }}
-            >
-              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+            <Select value={language} onValueChange={(value) => {
+              if (value) setLanguage(value)
+            }}>
+              <SelectTrigger className="flex items-center gap-2 w-full">
                 <div className="flex items-center gap-3">
                   <HugeiconsIcon size={16} icon={Globe02Icon} />
-                  <SelectValue />
+                  <span>
+                    {language === "pt-br" ? "Português (Brasil)" : language === "en" ? "English" : "Español"}
+                  </span>
                 </div>
               </SelectTrigger>
               <SelectContent>
@@ -94,14 +133,14 @@ export default function VideoSettingsPage() {
             </Select>
 
             <Select value={ratio} onValueChange={(value) => {
-              if (value) {
-                setRatio(value)
-              }
+              if (value) setRatio(value)
             }}>
-              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+              <SelectTrigger className="flex items-center gap-2 w-full">
                 <div className="flex items-center gap-3">
                   <HugeiconsIcon size={16} icon={AspectRatioIcon} />
-                  <SelectValue />
+                  <span>
+                    {ratio === "9:16" ? "Ratio 9:16" : ratio === "16:9" ? "Ratio 16:9" : "Ratio 1:1"}
+                  </span>
                 </div>
               </SelectTrigger>
               <SelectContent>
@@ -112,14 +151,14 @@ export default function VideoSettingsPage() {
             </Select>
 
             <Select value={clipLength} onValueChange={(value) => {
-              if (value) {
-                setClipLength(value)
-              }
+              if (value) setClipLength(value)
             }}>
-              <SelectTrigger className="border w-full border-border rounded-md h-12 px-4 bg-transparent text-[#ACACAC]">
+              <SelectTrigger className="flex items-center gap-2 w-full">
                 <div className="flex items-center gap-3">
                   <HugeiconsIcon size={16} icon={Clock01Icon} />
-                  <SelectValue />
+                  <span>
+                    {clipLength === "30-60" ? "30s-60s" : clipLength === "60-90" ? "60s-90s" : "90s-120s"}
+                  </span>
                 </div>
               </SelectTrigger>
               <SelectContent>
@@ -147,7 +186,7 @@ export default function VideoSettingsPage() {
 
             <div className="flex justify-end items-center gap-2">
               <p className="text-end text-base text-foreground">
-                Irá usar 124 créditos
+                Irá usar {calculateCredits()} créditos
               </p>
               <HugeiconsIcon size={16} icon={AlertSquareIcon} />
             </div>

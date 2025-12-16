@@ -6,7 +6,7 @@ from .video import Video
 
 class Clip(models.Model):
     # Identificadores
-    clip_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    clip_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="clips", null=True, blank=True)
     
     video = models.ForeignKey(
@@ -31,6 +31,10 @@ class Clip(models.Model):
     # Scoring e análise
     engagement_score = models.IntegerField(null=True, blank=True)  # 0-100
     confidence_score = models.IntegerField(null=True, blank=True)  # 0-100
+    
+    # Transcrição e thumbnail
+    transcript = models.TextField(null=True, blank=True)  # Texto da transcrição
+    thumbnail_storage_path = models.CharField(max_length=500, null=True, blank=True)  # Caminho da thumbnail no R2
 
     # Versionamento
     version = models.IntegerField(default=1)

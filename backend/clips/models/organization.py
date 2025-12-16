@@ -15,8 +15,9 @@ class Organization(models.Model):
     ]
 
     # Identificadores
-    organization_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    organization_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
+    color = models.CharField(max_length=7, default="#3b82f6")  # Cor em formato hex
 
     # Plano
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="starter")

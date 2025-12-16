@@ -3,7 +3,8 @@ Views para gerenciamento de jobs de processamento de vídeo.
 """
 
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.http import StreamingHttpResponse
 import json
@@ -15,6 +16,7 @@ from ..decorators import require_credits, rate_limit
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 @require_credits
 @rate_limit(requests_per_hour=10, requests_per_minute=100)
 def create_job(request):
@@ -22,6 +24,7 @@ def create_job(request):
     Cria um novo job de processamento de vídeo.
     
     Validações:
+    - Usuário autenticado
     - Créditos suficientes
     - Rate limiting
     - Vídeo existe
@@ -30,7 +33,6 @@ def create_job(request):
     {
         "video_id": "uuid",
         "organization_id": "uuid",
-        "user_id": "uuid",
         "configuration": {
             "language": "pt-BR",
             "target_ratios": ["9:16", "1:1", "16:9"],
@@ -41,9 +43,11 @@ def create_job(request):
     }
     """
     try:
+        # Obtém user_id do usuário autenticado
+        user_id = request.user.user_id
+        
         video_id = request.data.get("video_id")
         organization_id = request.data.get("organization_id")
-        user_id = request.data.get("user_id")
         configuration = request.data.get("configuration", {})
 
         # Obtém dados do decorator
@@ -59,7 +63,7 @@ def create_job(request):
 
         # Registra transação
         CreditTransaction.objects.create(
-            organization=org,
+            organization_id=organization_id,
             amount=credits_needed,
             type="consumption",
             reason=f"Processamento de vídeo - {video.title}",
@@ -78,7 +82,7 @@ def create_job(request):
 
         # Dispara primeira task
         task = download_video_task.apply_async(
-            args=[video.id],
+            args=[str(video.video_id)],
             queue=f"video.download.{org.plan}",
         )
 

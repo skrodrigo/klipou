@@ -3,11 +3,12 @@ Task para embedding e classificação com Gemini.
 Etapa: Embedding/Classifying
 Usa Gemini API para gerar embeddings do texto dos trechos candidatos.
 """
-
+import os
 from celery import shared_task
 from django.conf import settings
 
 from ..models import Video, Transcript
+from .job_utils import update_job_status
 import google.generativeai as genai
 
 
@@ -27,7 +28,13 @@ def embed_classify_task(self, video_id: int) -> dict:
     - Score de engajamento
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Procura vídeo por video_id (UUID)
+        video = Video.objects.get(video_id=video_id)
+        
+        # Obtém organização
+        from ..models import Organization
+        org = Organization.objects.get(organization_id=video.organization_id)
+        
         video.status = "embedding"
         video.current_step = "embedding"
         video.save()
@@ -83,11 +90,23 @@ def embed_classify_task(self, video_id: int) -> dict:
 
         # Atualiza vídeo
         video.last_successful_step = "embedding"
+        video.status = "selecting"
+        video.current_step = "selecting"
         video.save()
+        
+        # Atualiza job status
+        update_job_status(str(video.video_id), "selecting", progress=60, current_step="selecting")
+
+        # Dispara próxima task (selecting)
+        from .select_clips_task import select_clips_task
+        select_clips_task.apply_async(
+            args=[str(video.video_id)],
+            queue=f"video.select.{org.plan}",
+        )
 
         return {
-            "video_id": video_id,
-            "status": "embedding",
+            "video_id": str(video.video_id),
+            "status": "selecting",
             "candidates_processed": len(candidates),
         }
 

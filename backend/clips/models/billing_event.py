@@ -18,7 +18,7 @@ class BillingEvent(models.Model):
     ]
 
     # Identificadores
-    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    event_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization_id = models.UUIDField()  # FK para Organization
 
     # Evento

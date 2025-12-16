@@ -223,3 +223,126 @@ def get_clip_details(request, clip_id):
             {"error": str(e)},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+@api_view(["PUT"])
+def rename_clip(request, clip_id):
+    """
+    Renomeia um clip.
+    
+    Body:
+    {
+        "title": "novo título",
+        "organization_id": "uuid"
+    }
+    """
+    try:
+        clip = Clip.objects.get(clip_id=clip_id)
+        
+        # Valida permissão
+        organization_id = request.data.get("organization_id")
+        if str(clip.video.organization_id) != organization_id:
+            return Response(
+                {"error": "Unauthorized"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        # Valida título
+        title = request.data.get("title", "").strip()
+        if not title:
+            return Response(
+                {"error": "Title is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Atualiza título
+        clip.title = title
+        clip.save()
+        
+        return Response(
+            {
+                "clip_id": str(clip.clip_id),
+                "title": clip.title,
+                "updated_at": clip.updated_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+    
+    except Clip.DoesNotExist:
+        return Response(
+            {"error": "Clip not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+@api_view(["POST"])
+def duplicate_clip(request, clip_id):
+    """
+    Duplica um clip.
+    
+    Body:
+    {
+        "organization_id": "uuid"
+    }
+    
+    Response:
+    {
+        "clip_id": "novo uuid",
+        "title": "título (cópia)",
+        "storage_path": "mesmo caminho do original"
+    }
+    """
+    try:
+        import uuid
+        
+        clip = Clip.objects.get(clip_id=clip_id)
+        
+        # Valida permissão
+        organization_id = request.data.get("organization_id")
+        if str(clip.video.organization_id) != organization_id:
+            return Response(
+                {"error": "Unauthorized"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        # Cria novo clip com os mesmos dados
+        new_clip = Clip.objects.create(
+            clip_id=uuid.uuid4(),
+            video=clip.video,
+            title=f"{clip.title} (cópia)",
+            start_time=clip.start_time,
+            end_time=clip.end_time,
+            duration=clip.duration,
+            ratio=clip.ratio,
+            storage_path=clip.storage_path,
+            file_size=clip.file_size,
+            engagement_score=clip.engagement_score,
+            confidence_score=clip.confidence_score,
+            transcript=clip.transcript,
+            thumbnail_storage_path=clip.thumbnail_storage_path,
+        )
+        
+        return Response(
+            {
+                "clip_id": str(new_clip.clip_id),
+                "title": new_clip.title,
+                "storage_path": new_clip.storage_path,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    
+    except Clip.DoesNotExist:
+        return Response(
+            {"error": "Clip not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )

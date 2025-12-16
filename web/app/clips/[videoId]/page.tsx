@@ -1,30 +1,20 @@
 "use client"
 
-import { use, useEffect, useState, useRef } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-  SheetFooter,
-} from "@/components/ui/sheet"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
-import { cn } from "@/lib/utils"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft02Icon, Download01Icon, FilterIcon, PlayIcon, Share03Icon, Edit02Icon, Copy01Icon, Delete02Icon, SentIcon, ScissorIcon, Upload04Icon, GlobeIcon, LockIcon } from "@hugeicons/core-free-icons"
-import { listVideoClips, type VideoClip } from "@/infra/videos/videos"
-import { Spinner } from "@/components/ui/spinner"
-import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
+import { getSession } from "@/infra/auth/auth"
+import { deleteClip, downloadClip, duplicateClip, listVideoClips, renameClip, submitClipFeedback } from "@/infra/videos/videos"
+import { cn } from "@/lib/utils"
+import { ArrowLeft02Icon, Delete02Icon, FilterIcon } from "@hugeicons/core-free-icons"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
+import { use, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
+import { PublishSheet } from "./components/publish-sheet"
+import { ClipCard } from "./components/clip-card"
 
 type ClipsPageProps = {
   params: Promise<{
@@ -35,9 +25,8 @@ type ClipsPageProps = {
 export default function ClipsPage({ params }: ClipsPageProps) {
   const router = useRouter()
   const { videoId: videoIdStr } = use(params)
-  const [clips, setClips] = useState<VideoClip[]>([])
-  const [loading, setLoading] = useState(true)
   const [selectedIdx, setSelectedIdx] = useState(0)
+  const [selectedClips, setSelectedClips] = useState<string[]>([])
   const [publishOpen, setPublishOpen] = useState(false)
   const [description, setDescription] = useState("")
   const [visibility, setVisibility] = useState<"public" | "private" | "friends">("public")
@@ -46,13 +35,76 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   const [allowStitch, setAllowStitch] = useState(true)
   const [scheduleAt, setScheduleAt] = useState("")
   const [isDialogOpen, setDialogOpen] = useState(false)
-  const videoId = parseInt(videoIdStr, 10) || null
+  const videoId = videoIdStr
   const [value, setValue] = useState<"public" | "private">("private")
   const [showTopFade, setShowTopFade] = useState(false)
   const [showBottomFade, setShowBottomFade] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const handleClipSelect = (clipId: number, idx: number) => {
+  const { data: user } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: getSession,
+  })
+
+  const { data: clips = [], isLoading: loading } = useQuery({
+    queryKey: ["video-clips", videoId],
+    queryFn: () => listVideoClips(videoId),
+    enabled: !!videoId,
+  })
+
+  const { mutate: downloadClipFile } = useMutation({
+    mutationFn: (clipId: string) => downloadClip(clipId, user?.organization_id || ""),
+    onSuccess: (data) => {
+      window.open(data.download_url, "_blank")
+      toast.success("Download iniciado!")
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao baixar clip")
+    },
+  })
+
+  const { mutate: submitFeedback } = useMutation({
+    mutationFn: (clipId: string) => submitClipFeedback(clipId, { rating: "good" }),
+    onSuccess: () => {
+      toast.success("Feedback enviado!")
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao enviar feedback")
+    },
+  })
+
+  const { mutate: deleteClipFile } = useMutation({
+    mutationFn: (clipId: string) => deleteClip(clipId, user?.organization_id || ""),
+    onSuccess: () => {
+      toast.success("Clip deletado!")
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao deletar clip")
+    },
+  })
+
+  const { mutate: renameClipFile } = useMutation({
+    mutationFn: ({ clipId, title }: { clipId: string; title: string }) =>
+      renameClip(clipId, title, user?.organization_id || ""),
+    onSuccess: () => {
+      toast.success("Clip renomeado!")
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao renomear clip")
+    },
+  })
+
+  const { mutate: duplicateClipFile } = useMutation({
+    mutationFn: (clipId: string) => duplicateClip(clipId, user?.organization_id || ""),
+    onSuccess: () => {
+      toast.success("Clip duplicado!")
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao duplicar clip")
+    },
+  })
+
+  const handleClipSelect = (clipId: string, idx: number) => {
     setSelectedIdx(idx)
     const element = document.getElementById(`clip-${clipId}`)
     if (element) {
@@ -60,18 +112,21 @@ export default function ClipsPage({ params }: ClipsPageProps) {
     }
   }
 
-  useEffect(() => {
-    async function loadClips() {
-      try {
-        const items = await listVideoClips(videoId)
-        setClips(items)
-      } finally {
-        setLoading(false)
-      }
+  const handleSelectAll = (checked: boolean | "indeterminate") => {
+    if (checked === true) {
+      setSelectedClips(clips.map((clip) => clip.clip_id))
+    } else {
+      setSelectedClips([])
     }
+  }
 
-    loadClips()
-  }, [videoId])
+  const toggleClipSelection = (clipId: string) => {
+    setSelectedClips(prev =>
+      prev.includes(clipId)
+        ? prev.filter(id => id !== clipId)
+        : [...prev, clipId]
+    )
+  }
 
   useEffect(() => {
     const scrollElement = scrollRef.current?.querySelector(
@@ -90,6 +145,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
     scrollElement.addEventListener("scroll", handleScroll)
     return () => scrollElement.removeEventListener("scroll", handleScroll)
   }, [clips])
+
 
 
   return (
@@ -122,9 +178,9 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                   <div className="p-4 space-y-2 max-h-[500px]">
                     {clips.map((clip, idx) => (
                       <button
-                        key={clip.id}
+                        key={clip.clip_id}
                         type="button"
-                        onClick={() => handleClipSelect(clip.id, idx)}
+                        onClick={() => handleClipSelect(clip.clip_id, idx)}
                         className={cn(
                           "w-full flex items-center gap-3 p-2 rounded-lg text-left transition-all group",
                           selectedIdx === idx
@@ -132,12 +188,17 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                             : "hover:bg-zinc-900"
                         )}
                       >
-                        {/* Vertical Thumbnail Placeholder */}
                         <div className="relative w-10 h-16 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            {/* Placeholder visual */}
-                            <div className="w-full h-full bg-zinc-700/20"></div>
-                          </div>
+                          {clip.video_url ? (
+                            <video
+                              src={clip.video_url}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-full h-full bg-zinc-700/20"></div>
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex-1 min-w-0">
@@ -169,9 +230,12 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                 <HugeiconsIcon icon={FilterIcon} className="h-4 w-4" />
                 <span>Filtrar</span>
               </Button>
-              <div className="flex bg-card items-center gap-2  rounded-md px-3 h-9">
+              <div className="flex bg-card items-center gap-2 rounded-md px-3 h-9">
                 <span className="text-xs text-zinc-300">Selecionar Tudo</span>
-                <Checkbox />
+                <Checkbox
+                  checked={selectedClips.length === clips.length && clips.length > 0}
+                  onCheckedChange={handleSelectAll}
+                />
               </div>
             </div>
             <div className="max-w-5xl mx-auto space-y-16 pb-20">
@@ -181,245 +245,57 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                 </div>
               ) : (
                 clips.map((clip, idx) => (
-                  <div id={`clip-${clip.id}`} key={clip.id} className="flex flex-col lg:flex-row gap-8 items-start group">
-
-                    {/* Left Column: Vertical Video Player */}
-                    <div className="shrink-0">
-                      <div className="relative w-[280px] aspect-[9/16] bg-card rounded-2xl overflow-hidden border border-zinc-800 shadow-xl">
-                        <Checkbox className="absolute top-2 right-2 pointer-events-auto" />
-                        <div className="absolute inset-0 flex items-center justify-center text-zinc-700">
-                          {/* Placeholder Content */}
-                          <HugeiconsIcon icon={PlayIcon} className="h-12 w-12 opacity-50" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Middle Column: Details */}
-                    <div className="flex-1 min-w-0 space-y-5 pt-2">
-                      {/* Header: ID + Title */}
-                      <div>
-                        <h3 className="text-lg font-medium text-zinc-100 flex items-start gap-2 leading-tight">
-                          <span className="text-primary font-bold">#{idx + 1}</span>
-                          {clip.title || "Redimensione vários elementos HTML com Copiar/Colar + IA!"}
-                        </h3>
-                      </div>
-
-                      {/* Stats & Primary Actions Row */}
-                      <div className="flex items-center flex-wrap gap-2">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-4xl font-bold text-white tracking-tighter">9.8</span>
-                          <span className="text-sm font-medium text-zinc-500">/10</span>
-                        </div>
-
-                        <div className="h-8 w-[1px] bg-muted mx-2 hidden sm:block"></div>
-
-                        <Button
-                          type="button"
-                          className="bg-primary text-white rounded-lg px-6 h-9 text-xs font-medium"
-                          onClick={() => setPublishOpen(true)}
-                        >
-                          <HugeiconsIcon icon={SentIcon} size={16} className="mr-2" />
-                          Publicar
-                        </Button>
-
-                        <Button variant="secondary" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700">
-                          <HugeiconsIcon icon={Download01Icon} size={16} />
-                        </Button>
-                        <Button variant="secondary" size="icon" className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700" onClick={() => setDialogOpen(true)}>
-                          <HugeiconsIcon icon={Share03Icon} size={16} />
-                        </Button>
-                        <Dialog open={isDialogOpen} onOpenChange={setDialogOpen}>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Compartilhe esse Projeto</DialogTitle>
-                              <DialogDescription>
-                                Anyone with the link can view
-                              </DialogDescription>
-                            </DialogHeader>
-                            <div className="mt-4 w-full flex gap-2 justify-between items-center">
-                              <Select value={value} onValueChange={(v) => setValue(v as "public" | "private")}>
-                                <SelectTrigger className="flex items-center gap-2 w-full">
-                                  {value === "public" ? (
-                                    <div className="flex items-center justi fy-start gap-2">
-                                      <HugeiconsIcon icon={GlobeIcon} size={16} />
-                                      <span>Qualquer pessoa pode ver</span>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center justify-start gap-2">
-                                      <HugeiconsIcon icon={LockIcon} size={16} />
-                                      <span>Somente você</span>
-                                    </div>
-                                  )}
-                                </SelectTrigger>
-
-                                <SelectContent>
-                                  <SelectItem value="public">Qualquer pessoa pode ver</SelectItem>
-                                  <SelectItem value="private">Somente você</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <Button variant="secondary" className="ml-2 bg-foreground hover:bg-foreground/90 text-background">Copy Link</Button>
-                            </div>
-                            <div className="mt-4 flex items-center">
-                              <Input type="email" placeholder="Enter email" className="flex-1" />
-                              <Button variant="default" className="ml-2">Invite</Button>
-                            </div>
-                            <Separator />
-                            <div className="mt-4  pt-4 flex items-center justify-between">
-                              <Avatar className="h-8 w-8">
-                                <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
-                                <AvatarFallback>SK</AvatarFallback>
-                              </Avatar>
-                              <div className="ml-3 flex-1">
-                                <p className="text-sm font-medium">Rodrigo Carvalho</p>
-                                <p className="text-xs text-muted-foreground">rodrigoa0987@gmail.com</p>
-                              </div>
-                              <span className="text-xs text-muted-foreground">Owner</span>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-                      </div>
-
-                      {/* Transcript Text */}
-                      <div className="bg-transparent">
-                        <p className="text-sm text-muted-foreground leading-7">
-                          E aí, olha só, com o React Grab, teoricamente agora eu posso vir na minha aplicação, apertar Command C, ele vai abrir isso aqui, para eu selecionar o elemento que eu quero modificar, digamos assim, e aí eu posso falar para ele, por exemplo, esse texto aqui está muito negrito, então eu clico no texto e falo, vou criar um novo agente aqui, esse texto está negrito, diminua ele para a fonte Medium, por exemplo, do Tape. E eu dou um Enter no elemento selecionado ali, e o cursor vai entender automaticamente aonde é que está esse elemento. Olha só, ele entendeu automaticamente, sendo que eu só falei esse texto, eu não falei exatamente qual, por causa que eu copiei, exatamente ele copia qual que é o elemento...
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right Column: Floating Actions */}
-                    <div className="flex flex-row lg:flex-col gap-3 shrink-0 lg:pt-2 w-full lg:w-auto overflow-x-auto lg:overflow-visible">
-                      <ActionButton icon={<HugeiconsIcon icon={Edit02Icon} size={16} />} label="Rename" variant="default" />
-                      <ActionButton icon={<HugeiconsIcon icon={Copy01Icon} size={16} />} label="Duplicate" variant="default" />
-                      <ActionButton icon={<HugeiconsIcon icon={Delete02Icon} size={16} />} label="Delete" variant="danger" />
-                      <ActionButton icon={<HugeiconsIcon icon={ScissorIcon} size={16} />} label="Cut" variant="default" />
-                    </div>
-
-                  </div>
+                  <ClipCard
+                    key={clip.clip_id}
+                    clip={clip}
+                    idx={idx}
+                    selectedClips={selectedClips}
+                    onToggleSelection={toggleClipSelection}
+                    onDownload={downloadClipFile}
+                    onPublish={() => setPublishOpen(true)}
+                    onRename={(clipId, title) => renameClipFile({ clipId, title })}
+                    onDuplicate={duplicateClipFile}
+                    onDelete={deleteClipFile}
+                    shareValue={value}
+                    onShareValueChange={setValue}
+                    isShareDialogOpen={isDialogOpen}
+                    onShareDialogOpenChange={setDialogOpen}
+                  />
                 ))
               )}
             </div>
 
-            <Sheet open={publishOpen} onOpenChange={setPublishOpen}>
-              <SheetContent
-                side="right"
-                className="sm:min-w-3xl w-full gap-0 p-0"
-                showCloseButton={false}
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-[240px_1fr] min-h-full">
-                  <div className="border-b sm:border-b-0  border-border p-4">
-                    <SheetHeader className="p-0">
-                      <SheetTitle>Publicar no social</SheetTitle>
-                      <SheetDescription className="sr-only">Publicar clip</SheetDescription>
-                    </SheetHeader>
+            <PublishSheet
+              open={publishOpen}
+              onOpenChange={setPublishOpen}
+              description={description}
+              onDescriptionChange={setDescription}
+              visibility={visibility}
+              onVisibilityChange={setVisibility}
+              allowComments={allowComments}
+              onAllowCommentsChange={setAllowComments}
+              allowDuets={allowDuets}
+              onAllowDuetsChange={setAllowDuets}
+              allowStitch={allowStitch}
+              onAllowStitchChange={setAllowStitch}
+              scheduleAt={scheduleAt}
+              onScheduleAtChange={setScheduleAt}
+            />
 
-                    <div className="mt-4 space-y-3">
-                      <div className="flex items-center gap-3">
-                        <Checkbox />
-                        <div className="relative">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
-                            <AvatarFallback>SK</AvatarFallback>
-                          </Avatar>
-                          <img src="/social/tiktok.svg" alt="TikTok" className="absolute bottom-0 right-0 h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">skrodrigo</div>
-                          <div className="text-xs text-muted-foreground truncate">@skrodrigo</div>
-                        </div>
-                      </div>
-
-                      <Button variant="secondary" className="w-full justify-center" size="sm">
-                        Manage Accounts
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="p-4 space-y-6 bg-card my-6 rounded-l-lg">
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Descrição</div>
-                      <Textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder="#Frontend #Desenvolvimento #AIEnhancement #Programacao #React
-"
-                        className="min-h-28"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Visibilidade</div>
-                      <Tabs value={visibility} onValueChange={(v) => {
-                        if (v === "public" || v === "private" || v === "friends") setVisibility(v)
-                      }} className="w-full">
-                        <TabsList className='w-full h-10'>
-                          <TabsTrigger value="public" className="flex-1 justify-center">Public</TabsTrigger>
-                          <TabsTrigger value="private" className="flex-1 justify-center">Private</TabsTrigger>
-                          <TabsTrigger value="friends" className="flex-1 justify-center">Friends</TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Allow</div>
-                      <div className="space-y-2">
-                        <label className="flex items-center gap-2 text-sm">
-                          <Checkbox checked={allowComments} onCheckedChange={(v) => setAllowComments(Boolean(v))} />
-                          comentários
-                        </label>
-                        <label className="flex items-center gap-2 text-sm">
-                          <Checkbox checked={allowDuets} onCheckedChange={(v) => setAllowDuets(Boolean(v))} />
-                          Duets
-                        </label>
-                        <label className="flex items-center gap-2 text-sm">
-                          <Checkbox checked={allowStitch} onCheckedChange={(v) => setAllowStitch(Boolean(v))} />
-                          Stitch
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Thumbnail</div>
-                      <div className="flex items-center gap-3">
-                        <div className="h-14 w-10 rounded-md border border-border bg-card flex items-center justify-center">
-                          <HugeiconsIcon icon={Upload04Icon} size={16} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <SheetFooter className="border-t border-border">
-                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between w-full">
-                    <Button variant="secondary" onClick={() => setPublishOpen(false)} className="order-last sm:order-first">
-                      Cancelar
-                    </Button>
-                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                      <Input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="h-9" />
-                      <Button variant="secondary">Agendar</Button>
-                      <Button className="bg-primary text-white" onClick={() => setPublishOpen(false)}>
-                        Publicar
-                      </Button>
-                    </div>
-                  </div>
-                </SheetFooter>
-              </SheetContent>
-            </Sheet>
+            {selectedClips.length > 0 && (
+              <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-card border rounded-md shadow-lg p-2 flex items-center gap-4 animate-in slide-in-from-bottom-5">
+                <span className="text-sm font-medium pl-2">
+                  {selectedClips.length} selecionado{selectedClips.length > 1 ? 's' : ''}
+                </span>
+                <Button variant="destructive" size="sm" onClick={() => setSelectedClips([])}>
+                  <HugeiconsIcon icon={Delete02Icon} className="size-4 mr-2" />
+                  Deletar
+                </Button>
+              </div>
+            )}
           </main>
         </div>
       )}
     </div>
-  )
-}
-
-function ActionButton({ icon, label, variant = "default" }: { icon: React.ReactNode, label: string, variant?: "default" | "danger" }) {
-  return (
-    <Button
-      variant={variant === "danger" ? "destructive" : "secondary"}
-      className="justify-start gap-3 w-full lg:w-32"
-    >
-      {icon}
-      <span>{label}</span>
-    </Button>
   )
 }

@@ -1,4 +1,5 @@
 from .download_video_task import download_video_task
+from .extract_thumbnail_task import extract_thumbnail_task
 from .normalize_video_task import normalize_video_task
 from .transcribe_video_task import transcribe_video_task
 from .analyze_semantic_task import analyze_semantic_task
@@ -13,6 +14,7 @@ from .cleanup_old_data_task import cleanup_old_data_task
 
 __all__ = (
     "download_video_task",
+    "extract_thumbnail_task",
     "normalize_video_task",
     "transcribe_video_task",
     "analyze_semantic_task",

@@ -8,9 +8,11 @@ import os
 import subprocess
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 
 from ..models import Video, Transcript
 from ..services.storage_service import R2StorageService
+from .job_utils import update_job_status
 
 
 @shared_task(bind=True, max_retries=5)
@@ -28,7 +30,13 @@ def caption_clips_task(self, video_id: int) -> dict:
     - Vídeo com legendas queimadas
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Procura vídeo por video_id (UUID)
+        video = Video.objects.get(video_id=video_id)
+        
+        # Obtém organização
+        from ..models import Organization
+        org = Organization.objects.get(organization_id=video.organization_id)
+        
         video.status = "captioning"
         video.current_step = "captioning"
         video.save()
@@ -71,13 +79,19 @@ def caption_clips_task(self, video_id: int) -> dict:
         transcript.caption_files = caption_files
         transcript.save()
 
-        # Atualiza vídeo
+        # Atualiza vídeo - FINALIZA PIPELINE
         video.last_successful_step = "captioning"
+        video.status = "done"
+        video.current_step = "done"
+        video.completed_at = timezone.now()
         video.save()
+        
+        # Atualiza job status - FINALIZA PIPELINE
+        update_job_status(str(video.video_id), "done", progress=100, current_step="done")
 
         return {
-            "video_id": video_id,
-            "status": "captioning",
+            "video_id": str(video.video_id),
+            "status": "done",
             "caption_files_count": len(caption_files),
         }
 

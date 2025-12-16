@@ -10,19 +10,19 @@ class OnboardingService:
     """Serviço para gerenciar dados de onboarding."""
 
     @staticmethod
-    def save_onboarding(user_id: int, onboarding_data: Dict[str, Any]) -> bool:
+    def save_onboarding(user_id, onboarding_data: Dict[str, Any]) -> bool:
         """
         Salva dados de onboarding para um usuário.
         
         Args:
-            user_id: ID do usuário
+            user_id: ID do usuário (UUID)
             onboarding_data: Dados de onboarding (content_type, platforms, objective, language, frequency)
         
         Returns:
             True se salvo com sucesso
         """
         try:
-            user = CustomUser.objects.get(id=user_id)
+            user = CustomUser.objects.get(user_id=user_id)
             user.onboarding_data = onboarding_data
             user.onboarding_completed = True
             user.save()
@@ -34,18 +34,18 @@ class OnboardingService:
             return False
 
     @staticmethod
-    def get_onboarding(user_id: int) -> Dict[str, Any]:
+    def get_onboarding(user_id) -> Dict[str, Any]:
         """
         Obtém dados de onboarding de um usuário.
         
         Args:
-            user_id: ID do usuário
+            user_id: ID do usuário (UUID)
         
         Returns:
             Dicionário com dados de onboarding
         """
         try:
-            user = CustomUser.objects.get(id=user_id)
+            user = CustomUser.objects.get(user_id=user_id)
             return {
                 "onboarding_completed": user.onboarding_completed,
                 "onboarding_data": user.onboarding_data,
@@ -54,19 +54,19 @@ class OnboardingService:
             return {}
 
     @staticmethod
-    def update_onboarding(user_id: int, onboarding_data: Dict[str, Any]) -> bool:
+    def update_onboarding(user_id, onboarding_data: Dict[str, Any]) -> bool:
         """
         Atualiza dados de onboarding de um usuário.
         
         Args:
-            user_id: ID do usuário
+            user_id: ID do usuário (UUID)
             onboarding_data: Novos dados de onboarding
         
         Returns:
             True se atualizado com sucesso
         """
         try:
-            user = CustomUser.objects.get(id=user_id)
+            user = CustomUser.objects.get(user_id=user_id)
             # Mescla dados existentes com novos dados
             if user.onboarding_data:
                 user.onboarding_data.update(onboarding_data)

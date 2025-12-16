@@ -17,8 +17,8 @@ class CreditTransaction(models.Model):
     ]
 
     # Identificadores
-    transaction_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="credit_transactions")
+    transaction_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization_id = models.UUIDField(null=True, blank=True)  # FK para Organization
     job_id = models.UUIDField(null=True, blank=True)  # FK para Job (opcional)
 
     # Transação
@@ -40,4 +40,4 @@ class CreditTransaction(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.organization.name} - {self.type} ({self.amount})"
+        return f"{self.organization_id} - {self.type} ({self.amount})"

@@ -14,7 +14,7 @@ class ClipFeedback(models.Model):
     ]
 
     # Identificadores
-    feedback_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    feedback_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clip = models.ForeignKey(Clip, on_delete=models.CASCADE, related_name="feedbacks")
     user_id = models.UUIDField()  # FK para User
 

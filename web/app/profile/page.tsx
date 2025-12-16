@@ -1,16 +1,52 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { useQuery, useMutation } from "@tanstack/react-query"
+import { useState } from "react"
+import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft02Icon } from "@hugeicons/core-free-icons"
-
+import { getSession, updateProfile, type UpdateProfilePayload } from "@/infra/auth/auth"
 
 export default function ProfilePage() {
   const router = useRouter()
+  const [email, setEmail] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const { data: user, isLoading } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: getSession,
+  })
+
+  const { mutate: updateUserProfile } = useMutation({
+    mutationFn: (payload: UpdateProfilePayload) => updateProfile(payload),
+    onSuccess: () => {
+      toast.success("Perfil atualizado com sucesso!")
+      setIsSubmitting(false)
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar perfil")
+      setIsSubmitting(false)
+    },
+  })
+
+  const handleSaveChanges = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!email || isSubmitting) return
+
+    setIsSubmitting(true)
+    updateUserProfile({ email })
+  }
+
+  if (isLoading) {
+    return <div className="w-full flex items-center justify-center p-6 h-screen">Carregando...</div>
+  }
+
+  const userInitials = user?.email?.split("@")[0]?.substring(0, 2).toUpperCase() || "U"
 
   return (
     <div className="w-full flex flex-col p-6">
@@ -33,28 +69,28 @@ export default function ProfilePage() {
             <div className="space-y-4">
               <div className="flex items-center gap-4">
                 <Avatar className="size-16">
-                  <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="Rodrigo" />
-                  <AvatarFallback>RC</AvatarFallback>
+                  <AvatarImage src="" alt={user?.email} />
+                  <AvatarFallback>{userInitials}</AvatarFallback>
                 </Avatar>
                 <div>
-                  <p className="text-xl font-semibold">Rodrigo Carvalho</p>
-                  <p className="text-muted-foreground">rodrigoa0987@gmail.com</p>
+                  <p className="text-xl font-semibold">{user?.email}</p>
+                  <p className="text-muted-foreground">Usuário KlipAI</p>
                 </div>
               </div>
               <Separator />
-              <form className="space-y-4">
-                <div className="grid gap-2">
-                  <label className="text-sm text-muted-foreground">Nome</label>
-                  <Input defaultValue="Rodrigo Carvalho" className="h-11 rounded-md" />
-                </div>
+              <form onSubmit={handleSaveChanges} className="space-y-4">
                 <div className="grid gap-2">
                   <label className="text-sm text-muted-foreground">Email</label>
-                  <Input type="email" defaultValue="rodrigoa0987@gmail.com" className="h-11 rounded-md" />
+                  <Input
+                    type="email"
+                    value={email || user?.email || ""}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="h-11 rounded-md"
+                  />
                 </div>
                 <div className="flex gap-3">
-                  <Button className="rounded-md">Salvar alterações</Button>
-                  <Button variant="outline" className="rounded-md">
-                    Atualizar senha
+                  <Button type="submit" disabled={isSubmitting} className="rounded-md">
+                    {isSubmitting ? "Salvando..." : "Salvar alterações"}
                   </Button>
                 </div>
               </form>

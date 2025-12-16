@@ -41,7 +41,7 @@ export default function RootLayout({
               </ThemeProvider>
             </AuthProvider>
           </UpgradeDialogProvider>
-          <Toaster />
+          <Toaster invert />
         </QueryClientProviderWrapper>
       </body>
     </html >

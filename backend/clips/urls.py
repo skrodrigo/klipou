@@ -4,30 +4,41 @@ from .views.videos_list_create_view import videos_list_create
 from .views.video_clips_list_view import video_clips_list
 from .views.video_progress_sse_view import video_progress_sse
 from .views.video_status_update_view import video_status_update_view
+from .views.video_management_view import get_video_details, rename_video, delete_video
 from .views.job_views import get_job_status, list_jobs, sse_job_status
-from .views.clip_views import download_clip, delete_clip, submit_clip_feedback, get_clip_details
+from .views.clip_views import download_clip, delete_clip, submit_clip_feedback, get_clip_details, rename_clip, duplicate_clip
 from .views.stripe_webhook_view import stripe_webhook
 from .views.schedule_views import list_schedules, create_schedule, update_schedule, cancel_schedule
 from .views.integration_views import list_integrations, connect_integration, oauth_callback, disconnect_integration
 from .views.organization_views import create_organization, get_organization, update_organization, get_organization_credits, add_team_member, remove_team_member
 from .views.admin_views import reprocess_job, cancel_job, adjust_credits, get_job_failures, get_step_statistics
-from .views.onboarding_views import complete_onboarding, get_onboarding, update_onboarding
+from .views.onboarding_views import get_csrf_token, onboarding_view, get_onboarding, update_onboarding
 from .views.team_member_views import list_team_members, invite_team_member, remove_team_member, update_team_member_role
 from .views.webhook_views import create_webhook, list_webhooks, delete_webhook, test_webhook
 from .views.billing_views import list_plans, upgrade_plan, downgrade_plan, cancel_subscription, get_billing_history, purchase_credits
 from .views.analytics_views import get_organization_stats, get_job_performance, get_failure_analysis, get_credit_usage, get_clip_performance
 from .views.template_views import list_templates, create_template, update_template, delete_template
 from .views.admin_dashboard_views import admin_dashboard, system_health, block_organization, unblock_organization
+from .views.upload_views import generate_upload_url, confirm_upload
+from .views.job_views import create_job
 
 
 urlpatterns = [
+    # Upload
+    path("videos/upload/generate-url/", generate_upload_url, name="generate-upload-url"),
+    path("videos/upload/confirm/", confirm_upload, name="confirm-upload"),
+    
     # Videos
     path("videos/", videos_list_create, name="videos-list-create"),
-    path("videos/<int:video_id>/clips/", video_clips_list, name="video-clips-list"),
-    re_path(r"^videos/(?P<video_id>\d+)/progress/?$", video_progress_sse, name="video-progress-sse"),
-    path("videos/<int:video_id>/status/", video_status_update_view, name="video-status-update"),
+    path("videos/<uuid:video_id>/", get_video_details, name="get-video-details"),
+    path("videos/<uuid:video_id>/rename/", rename_video, name="rename-video"),
+    path("videos/<uuid:video_id>/delete/", delete_video, name="delete-video"),
+    path("videos/<uuid:video_id>/clips/", video_clips_list, name="video-clips-list"),
+    path("videos/<uuid:video_id>/progress/", video_progress_sse, name="video-progress-sse"),
+    path("videos/<uuid:video_id>/status/", video_status_update_view, name="video-status-update"),
     
     # Jobs (SSE + Status)
+    path("jobs/", create_job, name="create-job"),
     path("jobs/<uuid:job_id>/", get_job_status, name="get-job-status"),
     path("jobs/<uuid:job_id>/stream/", sse_job_status, name="sse-job-status"),
     path("organizations/<uuid:organization_id>/jobs/", list_jobs, name="list-jobs"),
@@ -36,6 +47,8 @@ urlpatterns = [
     path("clips/<uuid:clip_id>/", get_clip_details, name="get-clip-details"),
     path("clips/<uuid:clip_id>/download/", download_clip, name="download-clip"),
     path("clips/<uuid:clip_id>/delete/", delete_clip, name="delete-clip"),
+    path("clips/<uuid:clip_id>/rename/", rename_clip, name="rename-clip"),
+    path("clips/<uuid:clip_id>/duplicate/", duplicate_clip, name="duplicate-clip"),
     path("clips/<uuid:clip_id>/feedback/", submit_clip_feedback, name="submit-clip-feedback"),
     
     # Stripe Webhook
@@ -66,7 +79,8 @@ urlpatterns = [
     path("organizations/<uuid:organization_id>/members/<uuid:member_id>/role/", update_team_member_role, name="update-team-member-role"),
     
     # Onboarding
-    path("onboarding/", complete_onboarding, name="complete-onboarding"),
+    path("csrf-token/", get_csrf_token, name="get-csrf-token"),
+    path("onboarding/", onboarding_view, name="onboarding-view"),
     path("onboarding/<int:user_id>/", get_onboarding, name="get-onboarding"),
     path("onboarding/<int:user_id>/update/", update_onboarding, name="update-onboarding"),
     

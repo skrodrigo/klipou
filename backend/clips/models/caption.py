@@ -15,7 +15,7 @@ class Caption(models.Model):
     ]
 
     # Identificadores
-    caption_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    caption_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clip_id = models.UUIDField()  # FK para Clip
 
     # Configuração

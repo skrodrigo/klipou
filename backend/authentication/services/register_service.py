@@ -50,7 +50,7 @@ def register_service(
         # Adiciona usuário como líder da organização
         TeamMember.objects.create(
             organization_id=organization.organization_id,
-            user_id=user.id,
+            user_id=user.user_id,
             role="leader"
         )
         

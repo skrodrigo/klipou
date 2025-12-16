@@ -164,13 +164,28 @@ def get_organization_credits(request, organization_id):
 
         org = Organization.objects.get(organization_id=organization_id)
 
-        query = CreditTransaction.objects.filter(organization=org).order_by("-created_at")
+        query = CreditTransaction.objects.filter(organization_id=organization_id).order_by("-created_at")
 
         if type_filter:
             query = query.filter(type=type_filter)
 
         total = query.count()
-        transactions = query[offset : offset + limit]
+        transactions = list(query[offset : offset + limit])
+
+        transactions_data = []
+        for tx in transactions:
+            try:
+                transactions_data.append({
+                    "transaction_id": str(tx.transaction_id),
+                    "amount": tx.amount,
+                    "type": tx.type,
+                    "reason": tx.reason,
+                    "balance_after": tx.balance_after,
+                    "created_at": tx.created_at.isoformat(),
+                })
+            except Exception as tx_error:
+                print(f"[get_organization_credits] Error serializing transaction {tx.transaction_id}: {str(tx_error)}")
+                continue
 
         return Response(
             {
@@ -179,17 +194,7 @@ def get_organization_credits(request, organization_id):
                 "total": total,
                 "limit": limit,
                 "offset": offset,
-                "transactions": [
-                    {
-                        "transaction_id": str(tx.transaction_id),
-                        "amount": tx.amount,
-                        "type": tx.type,
-                        "reason": tx.reason,
-                        "balance_after": tx.balance_after,
-                        "created_at": tx.created_at.isoformat(),
-                    }
-                    for tx in transactions
-                ],
+                "transactions": transactions_data,
             },
             status=status.HTTP_200_OK,
         )
@@ -200,6 +205,9 @@ def get_organization_credits(request, organization_id):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        import traceback
+        print(f"[get_organization_credits] Error: {str(e)}")
+        print(traceback.format_exc())
         return Response(
             {"error": str(e)},
             status=status.HTTP_400_BAD_REQUEST,

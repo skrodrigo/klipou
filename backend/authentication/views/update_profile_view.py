@@ -44,7 +44,7 @@ def update_profile_view(request: HttpRequest) -> JsonResponse:
     # Atualiza email se fornecido
     if "email" in body:
         new_email = body.get("email")
-        if User.objects.filter(email=new_email).exclude(id=user.id).exists():
+        if User.objects.filter(email=new_email).exclude(user_id=user.user_id).exists():
             return JsonResponse({"detail": "Email already in use"}, status=400)
         user.email = new_email
 
@@ -62,7 +62,7 @@ def update_profile_view(request: HttpRequest) -> JsonResponse:
         {
             "detail": "Profile updated successfully",
             "user": {
-                "id": user.id,
+                "user_id": str(user.user_id),
                 "email": user.email,
                 "onboarding_completed": user.onboarding_completed,
                 "onboarding_data": user.onboarding_data,

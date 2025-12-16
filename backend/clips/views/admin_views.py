@@ -121,7 +121,7 @@ def cancel_job(request, job_id):
         org.save()
 
         CreditTransaction.objects.create(
-            organization=org,
+            organization_id=org.organization_id,
             job_id=job.job_id,
             amount=-job.credits_consumed,
             type="refund",
@@ -183,7 +183,7 @@ def adjust_credits(request, organization_id):
 
         # Registra transação
         CreditTransaction.objects.create(
-            organization=org,
+            organization_id=org.organization_id,
             amount=-amount,  # Negativo = adição
             type="adjustment",
             reason=reason,

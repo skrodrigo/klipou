@@ -55,6 +55,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.3.7",
     "@tailwindcss/postcss": "^4",
+    "@tsconfig/next": "^2.0.5",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

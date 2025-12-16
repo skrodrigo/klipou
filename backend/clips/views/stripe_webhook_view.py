@@ -131,7 +131,7 @@ def _handle_payment_succeeded(payment_intent):
 
         # Registra transação
         CreditTransaction.objects.create(
-            organization=org,
+            organization_id=org.organization_id,
             amount=-credits_purchased,  # Negativo = compra
             type="purchase",
             reason=f"Compra de créditos - ${amount:.2f}",
@@ -166,7 +166,7 @@ def _handle_subscription_created(subscription):
         
         # Cria subscription
         Subscription.objects.create(
-            organization=org,
+            organization_id=org.organization_id,
             stripe_subscription_id=stripe_subscription_id,
             plan=_map_plan_name(plan_name),
             status="active",

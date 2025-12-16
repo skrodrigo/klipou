@@ -9,8 +9,9 @@ import subprocess
 from celery import shared_task
 from django.conf import settings
 
-from ..models import Video
+from ..models import Video, Transcript
 from ..services.storage_service import R2StorageService
+from .job_utils import update_job_status
 
 
 @shared_task(bind=True, max_retries=5)
@@ -25,7 +26,13 @@ def normalize_video_task(self, video_id: int) -> dict:
     - Codec: H.264 para vídeo, AAC para áudio
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Procura vídeo por video_id (UUID)
+        video = Video.objects.get(video_id=video_id)
+        
+        # Obtém organização
+        from ..models import Organization
+        org = Organization.objects.get(organization_id=video.organization_id)
+        
         video.status = "normalizing"
         video.current_step = "normalizing"
         video.save()
@@ -50,14 +57,23 @@ def normalize_video_task(self, video_id: int) -> dict:
         video.file_size = os.path.getsize(output_path)
         video.resolution = resolution
         video.last_successful_step = "normalizing"
+        video.status = "transcribing"
+        video.current_step = "transcribing"
         video.save()
+        
+        # Atualiza job status
+        update_job_status(str(video.video_id), "transcribing", progress=30, current_step="transcribing")
 
-        # Armazena arquivo normalizado localmente (será usado nas próximas etapas)
-        # Não faz upload para R2 ainda (será feito após processamento completo)
+        # Dispara próxima task (transcribing)
+        from .transcribe_video_task import transcribe_video_task
+        transcribe_video_task.apply_async(
+            args=[str(video.video_id)],
+            queue=f"video.transcribe.{org.plan}",
+        )
 
         return {
-            "video_id": video_id,
-            "status": "normalizing",
+            "video_id": str(video.video_id),
+            "status": "transcribing",
             "file_size": video.file_size,
             "resolution": resolution,
         }

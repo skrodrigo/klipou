@@ -11,6 +11,7 @@ from celery import shared_task
 from django.conf import settings
 
 from ..models import Video, Transcript
+from .job_utils import update_job_status
 from ..services.storage_service import R2StorageService
 
 
@@ -29,7 +30,13 @@ def transcribe_video_task(self, video_id: int) -> dict:
     - SRT (para compatibilidade)
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Procura vídeo por video_id (UUID)
+        video = Video.objects.get(video_id=video_id)
+        
+        # Obtém organização
+        from ..models import Organization
+        org = Organization.objects.get(organization_id=video.organization_id)
+        
         video.status = "transcribing"
         video.current_step = "transcribing"
         video.save()
@@ -78,11 +85,23 @@ def transcribe_video_task(self, video_id: int) -> dict:
 
         # Atualiza vídeo
         video.last_successful_step = "transcribing"
+        video.status = "analyzing"
+        video.current_step = "analyzing"
         video.save()
+        
+        # Atualiza job status
+        update_job_status(str(video.video_id), "analyzing", progress=40, current_step="analyzing")
+
+        # Dispara próxima task (analyzing)
+        from .analyze_semantic_task import analyze_semantic_task
+        analyze_semantic_task.apply_async(
+            args=[str(video.video_id)],
+            queue=f"video.analyze.{org.plan}",
+        )
 
         return {
-            "video_id": video_id,
-            "status": "transcribing",
+            "video_id": str(video.video_id),
+            "status": "analyzing",
             "language": transcript_data.get("language"),
             "confidence_score": transcript_data.get("confidence_score"),
             "segments_count": len(transcript_data.get("segments", [])),

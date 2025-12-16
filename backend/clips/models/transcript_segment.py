@@ -8,7 +8,7 @@ from django.db import models
 
 class TranscriptSegment(models.Model):
     # Identificadores
-    segment_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    segment_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     transcript_id = models.UUIDField()  # FK para Transcript
 
     # Conteúdo

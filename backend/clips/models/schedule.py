@@ -25,7 +25,7 @@ class Schedule(models.Model):
     ]
 
     # Identificadores
-    schedule_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    schedule_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clip = models.ForeignKey(Clip, on_delete=models.CASCADE, related_name="schedules")
     user_id = models.UUIDField()  # FK para User
 

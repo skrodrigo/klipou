@@ -16,7 +16,7 @@ class Subscription(models.Model):
     ]
 
     # Identificadores
-    subscription_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    subscription_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="subscription")
 
     # Stripe

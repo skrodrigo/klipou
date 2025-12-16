@@ -18,21 +18,20 @@ def list_videos() -> List[Dict[str, Any]]:
     videos = []
     
     for video in Video.objects.prefetch_related("clips").order_by("-created_at"):
-        status_data = cache.get(f"video_status_{video.id}")
+        status_data = cache.get(f"video_status_{video.video_id}")
         progress = status_data.get("progress", 0) if status_data else 0
         
-        # Gera URL assinada para thumbnail
-        thumbnail_url = video.thumbnail
+        # Gera URL pública da thumbnail a partir do caminho no R2
+        thumbnail_url = None
         if video.thumbnail_storage_path:
             try:
-                thumbnail_url = storage.get_signed_url(video.thumbnail_storage_path, expiration=86400)
+                thumbnail_url = storage.get_public_url(video.thumbnail_storage_path)
             except Exception:
-                thumbnail_url = video.thumbnail  # Fallback para base64 ou URL anterior
+                thumbnail_url = None 
         
         clips = []
         for clip in video.clips.all():
             clip_data = {
-                "id": clip.id,
                 "clip_id": str(clip.clip_id),
                 "title": clip.title,
                 "created_at": clip.created_at.isoformat(),
@@ -43,7 +42,6 @@ def list_videos() -> List[Dict[str, Any]]:
                 "engagement_score": clip.engagement_score,
             }
             
-            # Gera URL assinada para clip
             if clip.storage_path:
                 try:
                     clip_data["storage_url"] = storage.get_signed_url(clip.storage_path, expiration=3600)
@@ -53,7 +51,6 @@ def list_videos() -> List[Dict[str, Any]]:
             clips.append(clip_data)
         
         videos.append({
-            "id": video.id,
             "video_id": str(video.video_id),
             "title": video.title,
             "created_at": video.created_at.isoformat(),
@@ -63,5 +60,6 @@ def list_videos() -> List[Dict[str, Any]]:
             "thumbnail": thumbnail_url,
             "storage_path": video.storage_path,
             "clips": clips,
+            "clips_count": len(clips),
         })
     return videos
