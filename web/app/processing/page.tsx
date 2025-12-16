@@ -13,7 +13,7 @@ import { toast } from "sonner"
 import { getSession } from "@/infra/auth/auth"
 import { useQuery } from "@tanstack/react-query"
 
-type ProcessingStatus = "ingestion" | "queued" | "downloading" | "normalizing" | "transcribing" | "analyzing" | "embedding" | "selecting" | "reframing" | "clipping" | "captioning" | "done" | "failed"
+type ProcessingStatus = "ingestion" | "queued" | "downloading" | "normalizing" | "transcribing" | "analyzing" | "embedding" | "selecting" | "reframing" | "rendering" | "clipping" | "captioning" | "done" | "failed"
 
 interface StatusMessage {
   status: ProcessingStatus
@@ -195,8 +195,7 @@ export default function ProcessingPage() {
     "embedding",
     "selecting",
     "reframing",
-    "clipping",
-    "captioning",
+    "rendering",
   ];
 
   const getUploadState = (): 'completed' | 'active' | 'pending' => {
@@ -291,8 +290,7 @@ export default function ProcessingPage() {
               { stage: "embedding" as ProcessingStatus, label: "Indexando o conteúdo" },
               { stage: "selecting" as ProcessingStatus, label: "Selecionando melhores trechos" },
               { stage: "reframing" as ProcessingStatus, label: "Reenquadrando vídeo" },
-              { stage: "clipping" as ProcessingStatus, label: "Gerando clips" },
-              { stage: "captioning" as ProcessingStatus, label: "Gerando legendas" },
+              { stage: "rendering" as ProcessingStatus, label: "Gerando clips finais" },
             ].map(({ stage, label }, idx) => {
               const state = getStageState(stage);
               const failedIdx = getFailedStageIndex();

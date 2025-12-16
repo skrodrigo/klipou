@@ -1,21 +1,19 @@
-"""
-Task para download de vídeo do R2 ou fonte externa.
-Etapa: Downloading
-"""
-
+import logging
 import os
 import subprocess
-from celery import shared_task, chain
+import json
+from celery import shared_task
 from django.conf import settings
-import requests
 
-from ..models import Video, Job
+from ..models import Video, Organization
 from ..services.storage_service import R2StorageService
 from .job_utils import update_job_status
 
+logger = logging.getLogger(__name__)
+
 
 @shared_task(bind=True, max_retries=5)
-def download_video_task(self, video_id) -> dict:
+def download_video_task(self, video_id: str) -> dict:
     """
     Baixa vídeo do R2 ou da fonte externa (stream).
     
@@ -66,16 +64,16 @@ def download_video_task(self, video_id) -> dict:
         video.last_successful_step = "downloading"
         video.save()
         
-        print(f"[download_video_task] Download concluído para video_id={video.video_id}")
+        logger.info(f"Download concluído para video_id={video.video_id}")
         
         # Dispara próxima task (extract_thumbnail)
         from .extract_thumbnail_task import extract_thumbnail_task
-        print(f"[download_video_task] Disparando extract_thumbnail_task para video_id={video.video_id}")
+        logger.info(f"Disparando extract_thumbnail_task para video_id={video.video_id}")
         task_result = extract_thumbnail_task.apply_async(
             args=[str(video.video_id)],
             queue=f"video.normalize.{org.plan}",
         )
-        print(f"[download_video_task] extract_thumbnail_task disparada com task_id={task_result.id}")
+        logger.info(f"extract_thumbnail_task disparada com task_id={task_result.id}")
 
         return {
             "video_id": str(video.video_id),
@@ -103,74 +101,86 @@ def download_video_task(self, video_id) -> dict:
 
 
 def _download_from_source(source_url: str, output_dir: str) -> str:
-    """Baixa vídeo de fonte externa (YouTube, TikTok, etc)."""
     try:
         import yt_dlp
     except ImportError:
         raise Exception("yt-dlp não está instalado. Adicione à requirements.txt")
 
-    output_path = os.path.join(output_dir, "video_original.mp4")
+    output_template = os.path.join(output_dir, "video_download")
 
     ydl_opts = {
-        "format": "best[ext=mp4]",
-        "outtmpl": output_path,
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "outtmpl": f"{output_template}.%(ext)s",
         "quiet": False,
         "no_warnings": False,
         "socket_timeout": 30,
+        "noplaylist": True,
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([source_url])
     except Exception as e:
-        raise Exception(f"Falha ao baixar vídeo de {source_url}: {e}")
+        raise Exception(f"Falha no download yt-dlp: {e}")
 
-    if not os.path.exists(output_path):
-        raise Exception("Arquivo de vídeo não foi criado após download")
+    expected_file = f"{output_template}.mp4"
+    if not os.path.exists(expected_file):
+        files = [f for f in os.listdir(output_dir) if f.startswith("video_download")]
+        if not files:
+            raise Exception("Arquivo de vídeo não encontrado após download")
+        expected_file = os.path.join(output_dir, files[0])
 
-    return output_path
+    final_path = os.path.join(output_dir, "video_original.mp4")
+    if expected_file != final_path:
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        os.rename(expected_file, final_path)
+
+    return final_path
 
 
 def _validate_video(video_path: str) -> tuple:
-    """Valida vídeo e extrai metadados usando um único comando ffprobe."""
     ffprobe_path = getattr(settings, "FFMPEG_PATH", "ffmpeg").replace("ffmpeg", "ffprobe")
-    timeout = 30  # Timeout de 30 segundos
+    timeout = 30
 
     try:
-        # Extrai tudo em um único comando (mais rápido) - apenas stream de vídeo
         cmd = [
             ffprobe_path,
             "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "format=duration:stream=width,height,codec_name",
-            "-of", "default=noprint_wrappers=1",
+            "-show_entries", "stream=codec_type,width,height,codec_name:format=duration",
+            "-of", "json",
             video_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
         
-        # Parse output
-        lines = result.stdout.strip().split('\n')
-        data = {}
-        for line in lines:
-            if '=' in line:
-                key, value = line.split('=', 1)
-                data[key] = value
+        data = json.loads(result.stdout)
         
-        duration = float(data.get('duration', 0))
-        width = int(data.get('width', 0))
-        height = int(data.get('height', 0))
-        codec = data.get('codec_name', '')
+        format_info = data.get('format', {})
+        streams = data.get('streams', [])
+
+        duration = float(format_info.get('duration', 0))
+        
+        video_stream = next((s for s in streams if s['codec_type'] == 'video'), None)
+        audio_stream = next((s for s in streams if s['codec_type'] == 'audio'), None)
+
+        if not video_stream:
+            raise Exception("Arquivo não possui stream de vídeo válido")
+        
+        if not audio_stream:
+            logger.warning(f"Vídeo {video_path} não possui áudio")
+
+        width = int(video_stream.get('width', 0))
+        height = int(video_stream.get('height', 0))
+        codec = video_stream.get('codec_name', '')
         resolution = f"{width}x{height}"
 
-        # Validações
-        if duration < 1:
-            raise Exception("Vídeo muito curto (mínimo 1 segundo)")
-        if duration > 7200:  # 2 horas
+        if duration < 5:
+            raise Exception("Vídeo muito curto (mínimo 5 segundos)")
+        if duration > 7200:
             raise Exception("Vídeo muito longo (máximo 2 horas)")
         if width < 240 or height < 240:
             raise Exception(f"Resolução muito baixa ({resolution}, mínimo 240p)")
-        if codec not in ["h264", "h265", "vp9"]:
-            raise Exception(f"Codec de vídeo não suportado ({codec})")
 
         return duration, resolution, codec
 

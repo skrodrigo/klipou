@@ -1,18 +1,14 @@
-"""
-Task para postagem em redes sociais.
-Etapa: Posting (após clipping)
-Publica clips em plataformas integradas.
-"""
-
+import logging
 from celery import shared_task
-from django.conf import settings
 
-from ..models import Video, Clip, Schedule, Integration
+from ..models import Clip, Schedule, Integration
 from ..services.storage_service import R2StorageService
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=5)
-def post_to_social_task(self, clip_id: int, platform: str, scheduled_time: str = None) -> dict:
+def post_to_social_task(self, clip_id: str, platform: str, scheduled_time: str = None) -> dict:
     """
     Publica clip em rede social.
     
@@ -25,8 +21,11 @@ def post_to_social_task(self, clip_id: int, platform: str, scheduled_time: str =
     - X (Twitter)
     """
     try:
-        clip = Clip.objects.get(id=clip_id)
+        logger.info(f"Iniciando postagem em {platform} para clip_id: {clip_id}")
+        
+        clip = Clip.objects.get(clip_id=clip_id)
         video = clip.video
+        logger.info(f"Clip encontrado: {clip.title}, vídeo: {video.video_id}")
 
         # Obtém integração da organização
         integration = Integration.objects.filter(
@@ -36,6 +35,7 @@ def post_to_social_task(self, clip_id: int, platform: str, scheduled_time: str =
         ).first()
 
         if not integration:
+            logger.error(f"Integração com {platform} não encontrada ou inativa para organização {video.organization_id}")
             raise Exception(f"Integração com {platform} não encontrada ou inativa")
 
         # Gera URL assinada para o clip
@@ -69,9 +69,10 @@ def post_to_social_task(self, clip_id: int, platform: str, scheduled_time: str =
         }
 
     except Clip.DoesNotExist:
+        logger.error(f"Clip não encontrado: {clip_id}")
         return {"error": "Clip not found", "status": "failed"}
     except Exception as e:
-        print(f"Erro ao postar em {platform}: {e}")
+        logger.error(f"Erro ao postar em {platform} para clip {clip_id}: {e}")
 
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)

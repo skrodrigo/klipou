@@ -1,71 +1,48 @@
-"""
-Task para transcrição de vídeo com Whisper.
-Etapa: Transcribing
-Gera transcrição com timestamps por palavra (obrigatório para legendagem).
-"""
-
+import logging
 import os
 import json
 import subprocess
 from celery import shared_task
 from django.conf import settings
 
-from ..models import Video, Transcript
+from ..models import Video, Transcript, Organization
 from .job_utils import update_job_status
 from ..services.storage_service import R2StorageService
 
+logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, max_retries=5)
-def transcribe_video_task(self, video_id: int) -> dict:
-    """
-    Executa Whisper local para transcrição.
-    
-    Gera:
-    - Transcrição completa (texto bruto com timestamps)
-    - Timestamps por segmento (início/fim de cada frase)
-    - Timestamps por palavra (para legendagem ASS e karaoke)
-    
-    Salva:
-    - JSON bruto (estruturado com timestamps por palavra)
-    - SRT (para compatibilidade)
-    """
+
+@shared_task(bind=True, max_retries=3)
+def transcribe_video_task(self, video_id: str) -> dict:
+    audio_path = None
     try:
-        # Procura vídeo por video_id (UUID)
-        video = Video.objects.get(video_id=video_id)
+        logger.info(f"Iniciando transcrição para video_id: {video_id}")
         
-        # Obtém organização
-        from ..models import Organization
+        video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
         
         video.status = "transcribing"
         video.current_step = "transcribing"
         video.save()
+        update_job_status(str(video.video_id), "transcribing", progress=35, current_step="transcribing")
 
-        output_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Arquivo normalizado da etapa anterior
-        video_path = os.path.join(output_dir, "video_normalized.mp4")
-
+        video_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
+        
+        video_path = os.path.join(video_dir, "video_normalized.mp4")
         if not os.path.exists(video_path):
-            raise Exception("Arquivo de vídeo normalizado não encontrado")
+            raise Exception("Arquivo video_normalized.mp4 não encontrado")
 
-        # Extrai áudio
-        audio_path = _extract_audio_with_ffmpeg(video_path, output_dir)
+        audio_path = _extract_audio_with_ffmpeg(video_path, video_dir)
 
-        # Transcreve com Whisper
-        transcript_data = _transcribe_with_whisper(audio_path, output_dir)
+        transcript_data = _transcribe_with_whisper(audio_path)
 
-        # Salva transcrição em JSON
-        json_path = os.path.join(output_dir, "transcript.json")
+        json_path = os.path.join(video_dir, "transcript.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(transcript_data, f, ensure_ascii=False, indent=2)
 
-        # Salva transcrição em SRT
-        srt_path = os.path.join(output_dir, "transcript.srt")
+        srt_path = os.path.join(video_dir, "transcript.srt")
         _save_srt_file(transcript_data, srt_path)
 
-        # Faz upload para R2
         storage = R2StorageService()
         transcript_storage_path = storage.upload_transcript(
             file_path=json_path,
@@ -73,26 +50,27 @@ def transcribe_video_task(self, video_id: int) -> dict:
             video_id=str(video.video_id),
         )
 
-        # Cria registro de Transcript no banco
-        Transcript.objects.create(
+        Transcript.objects.update_or_create(
             video=video,
-            full_text=transcript_data.get("full_text", ""),
-            segments=transcript_data.get("segments", []),
-            language=transcript_data.get("language", "en"),
-            confidence_score=transcript_data.get("confidence_score", 0),
-            storage_path=transcript_storage_path,
+            defaults={
+                "full_text": transcript_data.get("full_text", ""),
+                "segments": transcript_data.get("segments", []),
+                "language": transcript_data.get("language", "en"),
+                "confidence_score": transcript_data.get("confidence_score", 0),
+                "storage_path": transcript_storage_path,
+            }
         )
 
-        # Atualiza vídeo
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
         video.last_successful_step = "transcribing"
         video.status = "analyzing"
         video.current_step = "analyzing"
         video.save()
         
-        # Atualiza job status
         update_job_status(str(video.video_id), "analyzing", progress=40, current_step="analyzing")
 
-        # Dispara próxima task (analyzing)
         from .analyze_semantic_task import analyze_semantic_task
         analyze_semantic_task.apply_async(
             args=[str(video.video_id)],
@@ -101,138 +79,124 @@ def transcribe_video_task(self, video_id: int) -> dict:
 
         return {
             "video_id": str(video.video_id),
-            "status": "analyzing",
             "language": transcript_data.get("language"),
-            "confidence_score": transcript_data.get("confidence_score"),
-            "segments_count": len(transcript_data.get("segments", [])),
+            "words_count": len(transcript_data.get("full_text", "").split()),
         }
 
     except Video.DoesNotExist:
         return {"error": "Video not found", "status": "failed"}
     except Exception as e:
-        video.status = "failed"
-        video.current_step = "transcribing"
-        video.error_code = "TRANSCRIPTION_ERROR"
-        video.error_message = str(e)
-        video.retry_count += 1
-        video.save()
+        logger.error(f"Erro transcrição {video_id}: {str(e)}", exc_info=True)
+        if video:
+            video.status = "failed"
+            video.error_message = str(e)
+            video.save()
+            
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    os.remove(audio_path)
+                except:
+                    pass
 
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=e, countdown=2 ** self.request.retries)
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
         return {"error": str(e), "status": "failed"}
 
 
 def _extract_audio_with_ffmpeg(video_path: str, output_dir: str) -> str:
-    """Extrai faixa de áudio do vídeo em WAV mono 16kHz para Whisper."""
-    audio_path = os.path.join(output_dir, "audio_for_whisper.wav")
+    audio_path = os.path.join(output_dir, "audio_temp.wav")
     ffmpeg_path = getattr(settings, "FFMPEG_PATH", "ffmpeg")
-    ffmpeg_timeout = int(getattr(settings, "FFMPEG_TIMEOUT", 600))
-
+    
     cmd = [
-        ffmpeg_path,
-        "-y",
+        ffmpeg_path, "-y",
         "-i", video_path,
         "-vn",
         "-acodec", "pcm_s16le",
         "-ar", "16000",
         "-ac", "1",
-        audio_path,
+        audio_path
     ]
 
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=ffmpeg_timeout,
-        )
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return audio_path
     except subprocess.CalledProcessError as e:
-        raise Exception(f"FFmpeg falhou ao extrair áudio: {e}")
-
-    if not os.path.exists(audio_path):
-        raise Exception("Arquivo de áudio não foi criado")
-
-    return audio_path
+        raise Exception(f"Erro FFmpeg áudio: {e.stderr.decode() if e.stderr else str(e)}")
 
 
-def _transcribe_with_whisper(audio_path: str, output_dir: str) -> dict:
-    """Transcreve áudio com Whisper e retorna dados estruturados."""
+def _transcribe_with_whisper(audio_path: str) -> dict:
     try:
         import whisper
+        import torch
     except ImportError:
-        raise Exception("Whisper não está instalado. Adicione 'openai-whisper' às dependências")
+        raise Exception("Instale: pip install openai-whisper torch")
 
-    model_name = getattr(settings, "WHISPER_MODEL", "base")
-    device = getattr(settings, "WHISPER_DEVICE", "cpu")
-
+    model_size = getattr(settings, "WHISPER_MODEL", "small")
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    logger.info(f"Carregando Whisper modelo '{model_size}' em '{device}'...")
+    
     try:
-        model = whisper.load_model(model_name, device=device)
-        result = model.transcribe(audio_path)
+        model = whisper.load_model(model_size, device=device)
+        
+        result = model.transcribe(audio_path, word_timestamps=True)
+        
     except Exception as e:
-        raise Exception(f"Whisper falhou ao transcrever: {e}")
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        raise Exception(f"Falha interna Whisper: {e}")
 
-    # Extrai dados estruturados
     segments = result.get("segments", [])
+    full_text = result.get("text", "").strip()
     language = result.get("language", "en")
 
-    # Constrói texto completo
-    full_text = " ".join([seg.get("text", "").strip() for seg in segments])
-
-    # Estrutura segmentos com timestamps por palavra
     structured_segments = []
+    
     for seg in segments:
-        segment_data = {
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "text": seg.get("text", "").strip(),
-            "words": [],
-        }
-
-        # Se disponível, extrai timestamps por palavra
+        words = []
         if "words" in seg:
-            segment_data["words"] = seg["words"]
+            for w in seg["words"]:
+                words.append({
+                    "word": w["word"].strip(),
+                    "start": w["start"],
+                    "end": w["end"],
+                    "score": w.get("probability", 0)
+                })
+        
+        structured_segments.append({
+            "start": seg["start"],
+            "end": seg["end"],
+            "text": seg["text"].strip(),
+            "words": words
+        })
 
-        structured_segments.append(segment_data)
-
-    # Calcula confidence score (média de confiança dos segmentos)
-    confidence_scores = [seg.get("confidence", 1.0) for seg in segments if "confidence" in seg]
-    confidence_score = int(sum(confidence_scores) / len(confidence_scores) * 100) if confidence_scores else 95
+    if device == "cuda":
+        del model
+        torch.cuda.empty_cache()
 
     return {
         "full_text": full_text,
         "segments": structured_segments,
         "language": language,
-        "confidence_score": confidence_score,
+        "confidence_score": 95
     }
 
 
 def _save_srt_file(transcript_data: dict, srt_path: str) -> None:
-    """Salva transcrição em formato SRT."""
     segments = transcript_data.get("segments", [])
+    
+    def format_time(seconds):
+        millis = int((seconds % 1) * 1000)
+        seconds = int(seconds)
+        mins, secs = divmod(seconds, 60)
+        hours, mins = divmod(mins, 60)
+        return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
     with open(srt_path, "w", encoding="utf-8") as f:
-        for idx, seg in enumerate(segments, 1):
-            start = seg.get("start", 0)
-            end = seg.get("end", 0)
-            text = seg.get("text", "").strip()
-
-            if not text:
-                continue
-
-            start_ts = _seconds_to_srt_time(start)
-            end_ts = _seconds_to_srt_time(end)
-
-            f.write(f"{idx}\n")
-            f.write(f"{start_ts} --> {end_ts}\n")
-            f.write(f"{text}\n\n")
-
-
-def _seconds_to_srt_time(seconds: float) -> str:
-    """Converte segundos para formato SRT HH:MM:SS,mmm."""
-    total_millis = int(round(seconds * 1000))
-    hours, rem = divmod(total_millis, 3600_000)
-    minutes, rem = divmod(rem, 60_000)
-    secs, millis = divmod(rem, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+        for i, seg in enumerate(segments, 1):
+            start = format_time(seg["start"])
+            end = format_time(seg["end"])
+            text = seg["text"].replace("\n", " ")
+            f.write(f"{i}\n{start} --> {end}\n{text}\n\n")

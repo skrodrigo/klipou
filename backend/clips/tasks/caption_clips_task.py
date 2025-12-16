@@ -1,47 +1,26 @@
-"""
-Task para legendagem avançada (ASS).
-Etapa: Captioning
-Gera arquivo ASS com timestamps por palavra e queima no vídeo.
-"""
-
+import logging
 import os
-import subprocess
 from celery import shared_task
 from django.conf import settings
-from django.utils import timezone
 
-from ..models import Video, Transcript
-from ..services.storage_service import R2StorageService
+from ..models import Video, Transcript, Organization
 from .job_utils import update_job_status
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=5)
-def caption_clips_task(self, video_id: int) -> dict:
-    """
-    Gera legendas ASS para cada clip selecionado.
-    
-    Entrada:
-    - Transcrição com timestamps por palavra
-    - Clips selecionados com timestamps
-    - Proporção do vídeo
-    
-    Saída:
-    - Arquivo ASS por clip
-    - Vídeo com legendas queimadas
-    """
+def caption_clips_task(self, video_id: str) -> dict:
     try:
-        # Procura vídeo por video_id (UUID)
-        video = Video.objects.get(video_id=video_id)
+        logger.info(f"Iniciando geração de legendas Karaoke para: {video_id}")
         
-        # Obtém organização
-        from ..models import Organization
+        video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
         
         video.status = "captioning"
         video.current_step = "captioning"
         video.save()
 
-        # Obtém transcrição e clips selecionados
         transcript = Transcript.objects.filter(video=video).first()
         if not transcript:
             raise Exception("Transcrição não encontrada")
@@ -53,57 +32,60 @@ def caption_clips_task(self, video_id: int) -> dict:
         output_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Gera ASS para cada clip
         caption_files = []
+        
         for idx, clip in enumerate(selected_clips):
-            start_time = clip.get("start_time", 0)
-            end_time = clip.get("end_time", 0)
+            update_job_status(str(video.video_id), "captioning", progress=85 + idx, current_step=f"captioning_clip_{idx+1}")
+            
+            clip_start = clip.get("start_time", 0)
+            clip_end = clip.get("end_time", 0)
 
-            # Gera arquivo ASS
-            ass_file = os.path.join(output_dir, f"caption_{idx}.ass")
-            _generate_ass_file(
+            ass_filename = f"caption_{idx}.ass"
+            ass_path = os.path.join(output_dir, ass_filename)
+            
+            _generate_karaoke_ass(
                 transcript=transcript,
-                start_time=start_time,
-                end_time=end_time,
-                output_file=ass_file,
+                clip_start=clip_start,
+                clip_end=clip_end,
+                output_file=ass_path,
             )
 
             caption_files.append({
                 "index": idx,
-                "ass_file": ass_file,
-                "start_time": start_time,
-                "end_time": end_time,
+                "ass_file": ass_path,
+                "start_time": clip_start,
+                "end_time": clip_end,
             })
 
-        # Armazena informações de legendas na transcrição
         transcript.caption_files = caption_files
         transcript.save()
 
-        # Atualiza vídeo - FINALIZA PIPELINE
         video.last_successful_step = "captioning"
-        video.status = "done"
-        video.current_step = "done"
-        video.completed_at = timezone.now()
+        video.status = "rendering"
+        video.current_step = "rendering"
         video.save()
         
-        # Atualiza job status - FINALIZA PIPELINE
-        update_job_status(str(video.video_id), "done", progress=100, current_step="done")
+        update_job_status(str(video.video_id), "rendering", progress=90, current_step="rendering")
+
+        from .clip_generation_task import clip_generation_task
+        clip_generation_task.apply_async(
+            args=[str(video.video_id)],
+            queue=f"video.clip.{org.plan}",
+        )
 
         return {
             "video_id": str(video.video_id),
-            "status": "done",
-            "caption_files_count": len(caption_files),
+            "captions_generated": len(caption_files),
         }
 
     except Video.DoesNotExist:
         return {"error": "Video not found", "status": "failed"}
     except Exception as e:
-        video.status = "failed"
-        video.current_step = "captioning"
-        video.error_code = "CAPTIONING_ERROR"
-        video.error_message = str(e)
-        video.retry_count += 1
-        video.save()
+        logger.error(f"Erro captioning {video_id}: {e}", exc_info=True)
+        if video:
+            video.status = "failed"
+            video.error_message = str(e)
+            video.save()
 
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)
@@ -111,84 +93,112 @@ def caption_clips_task(self, video_id: int) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _generate_ass_file(
+def _generate_karaoke_ass(
     transcript: "Transcript",
-    start_time: float,
-    end_time: float,
+    clip_start: float,
+    clip_end: float,
     output_file: str,
 ) -> None:
-    """
-    Gera arquivo ASS com legendas para um clip.
-    
-    Estilo:
-    - Fonte: Bold
-    - Texto: CAIXA ALTA
-    - Posição: Centralizado na parte inferior
-    - Máximo: 2 linhas por frame
-    - Destaque dinâmico: Karaoke (palavra falada em destaque)
-    """
     segments = transcript.segments or []
 
-    # Filtra segmentos que caem dentro do intervalo do clip
-    clip_segments = [
-        seg for seg in segments
-        if seg.get("start", 0) >= start_time and seg.get("end", 0) <= end_time
-    ]
-
-    # ASS header padrão
-    ass_content = """[Script Info]
-Title: Klipai Caption
+    header = """[Script Info]
+Title: Klipai Karaoke
 ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: Default,Montserrat ExtraBold,60,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,20,20,150,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    events = []
 
-    # Adiciona eventos de legenda
-    for seg in clip_segments:
-        start = seg.get("start", 0)
-        end = seg.get("end", 0)
-        text = (seg.get("text") or "").upper()
-
-        # Converte tempo para formato ASS (HH:MM:SS.CC)
-        start_ts = _seconds_to_ass_time(start)
-        end_ts = _seconds_to_ass_time(end)
-
-        # Aplica karaoke se houver timestamps por palavra
+    for seg in segments:
+        seg_start = seg.get("start", 0)
+        seg_end = seg.get("end", 0)
+        
+        if seg_end < clip_start or seg_start > clip_end:
+            continue
+            
         words = seg.get("words", [])
-        if words:
-            text = _apply_karaoke(text, words)
+        if not words:
+            rel_start = max(0, seg_start - clip_start)
+            rel_end = min(clip_end - clip_start, seg_end - clip_start)
+            
+            if rel_end > rel_start:
+                start_s = _seconds_to_ass_time(rel_start)
+                end_s = _seconds_to_ass_time(rel_end)
+                text = (seg.get("text") or "").strip().upper()
+                events.append(f"Dialogue: 0,{start_s},{end_s},Default,,0,0,0,,{text}")
+            continue
 
-        # Limita a 2 linhas
-        text_lines = text.split()
-        if len(text_lines) > 10:  # Aproximadamente 2 linhas
-            text = " ".join(text_lines[:10])
+        current_line_words = []
+        current_chars = 0
+        MAX_CHARS_PER_LINE = 25
+        
+        for w in words:
+            word_text = w.get("word", "").strip()
+            word_start = w.get("start", 0)
+            word_end = w.get("end", 0)
+            
+            rel_w_start = word_start - clip_start
+            rel_w_end = word_end - clip_start
+            
+            if rel_w_end < 0 or rel_w_start > (clip_end - clip_start):
+                continue
 
-        ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}\n"
+            current_line_words.append({
+                "text": word_text,
+                "start": rel_w_start,
+                "end": rel_w_end,
+                "duration_cs": int((word_end - word_start) * 100)
+            })
+            
+            current_chars += len(word_text) + 1
+            
+            if current_chars >= MAX_CHARS_PER_LINE or word_text.endswith(('.', '?', '!')):
+                _add_karaoke_event(events, current_line_words)
+                current_line_words = []
+                current_chars = 0
+        
+        if current_line_words:
+            _add_karaoke_event(events, current_line_words)
 
-    # Salva arquivo ASS
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write(ass_content)
+        f.write(header + "\n".join(events))
 
 
-def _apply_karaoke(text: str, words: list) -> str:
-    """
-    Aplica efeito karaoke ao texto usando tags ASS.
-    Destaca a palavra sendo falada em tempo real.
-    """
-    # Implementação simplificada
-    # Em produção, seria necessário sincronizar com timestamps exatos
-    return text
+def _add_karaoke_event(events_list, words_data):
+    if not words_data:
+        return
+
+    start_time = words_data[0]["start"]
+    end_time = words_data[-1]["end"]
+    
+    start_s = _seconds_to_ass_time(start_time)
+    end_s = _seconds_to_ass_time(end_time)
+    
+    text_parts = []
+    for w in words_data:
+        clean_text = w["text"].upper()
+        duration = w["duration_cs"]
+        text_parts.append(f"{{\\k{duration}}}{clean_text}")
+        
+    full_text = " ".join(text_parts)
+    
+    events_list.append(f"Dialogue: 0,{start_s},{end_s},Default,,0,0,0,,{full_text}")
 
 
 def _seconds_to_ass_time(seconds: float) -> str:
-    """Converte segundos para formato ASS HH:MM:SS.CC."""
-    total_centiseconds = int(round(seconds * 100))
-    hours, rem = divmod(total_centiseconds, 360000)
-    minutes, rem = divmod(rem, 6000)
-    secs, centisecs = divmod(rem, 100)
-    return f"{hours:01d}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
+    if seconds < 0:
+        seconds = 0
+    
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    centisecs = int((seconds % 1) * 100)
+    
+    return f"{hours:1d}:{minutes:02d}:{secs:02d}.{centisecs:02d}"

@@ -48,6 +48,11 @@ app.conf.task_queues = {
     "video.reframe.pro": {"exchange": "video", "routing_key": "reframe.pro", "priority": 5},
     "video.reframe.business": {"exchange": "video", "routing_key": "reframe.business", "priority": 10},
     
+    # Scoring (por plano)
+    "video.scoring.starter": {"exchange": "video", "routing_key": "scoring.starter", "priority": 1},
+    "video.scoring.pro": {"exchange": "video", "routing_key": "scoring.pro", "priority": 5},
+    "video.scoring.business": {"exchange": "video", "routing_key": "scoring.business", "priority": 10},
+    
     # Clip (por plano)
     "video.clip.starter": {"exchange": "video", "routing_key": "clip.starter", "priority": 1},
     "video.clip.pro": {"exchange": "video", "routing_key": "clip.pro", "priority": 5},
@@ -101,6 +106,9 @@ app.conf.task_routes = {
     
     # Reframe
     "clips.tasks.reframe_video_task": {"queue": "video.reframe.pro"},
+    
+    # Scoring
+    "clips.tasks.clip_scoring_task": {"queue": "video.scoring.starter"},
     
     # Caption
     "clips.tasks.caption_clips_task": {"queue": "video.caption.starter"},

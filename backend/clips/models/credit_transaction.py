@@ -27,6 +27,7 @@ class CreditTransaction(models.Model):
     reason = models.TextField()
 
     # Saldo
+    balance_before = models.IntegerField(null=True, blank=True)  # Saldo antes da transação
     balance_after = models.IntegerField()  # Saldo após transação
 
     # Timestamps

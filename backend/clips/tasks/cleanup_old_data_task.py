@@ -1,174 +1,228 @@
 """
-Task para limpeza de dados antigos.
+Task para limpeza de dados e arquivos antigos.
 Cron job executado diariamente.
-Marca recursos como deletados (soft delete) conforme políticas de retenção.
+Estratégia: Hard Delete de arquivos (economia) + Soft Delete de registros (auditoria).
 """
 
+import logging
 from datetime import datetime, timedelta
 from celery import shared_task
-from django.conf import settings
 from django.utils import timezone
 
-from ..models import Video, Clip, Transcript, Job
+from ..models import Video, Clip, Job, Subscription
+from ..services.storage_service import R2StorageService
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task
 def cleanup_old_data_task() -> dict:
     """
-    Limpeza automática de dados antigos via soft delete.
+    Limpeza de dados e arquivos antigos com otimizações de performance e custo.
     
-    Políticas de Retenção:
-    - Vídeo original: 30 dias (soft delete após 30 dias)
-    - Clips gerados: Indefinido (manter enquanto plano ativo)
-    - Legendas (ASS): Indefinido (manter para reutilização)
-    - Transcrição: Indefinido (manter para análise futura)
-    - Jobs falhos: 7 dias (soft delete após 7 dias)
-    - Logs: 30 dias (arquivar após 30 dias)
-    - Dados após cancelamento: 90 dias (soft delete 3 meses após cancelamento)
+    Estratégia de Custo:
+    - Vídeos Originais (>30 dias): Hard Delete do arquivo R2 + Soft Delete no DB.
+    - Jobs Falhos (>7 dias): Bulk Update no DB (1 query em vez de N).
+    - Cancelados (>90 dias): Soft Delete em cascata com limpeza de arquivos.
     
-    Regras:
-    - Dados nunca são removidos do banco (apenas marcados como deletados)
-    - Hard delete NUNCA ocorre (apenas soft delete permanente)
-    - Recuperação possível por admin se necessário
+    Performance:
+    - Iterator com chunk_size=100: Evita carregar 50k objetos na RAM.
+    - Bulk Update: Transforma loops em operações de milissegundos.
+    - Logging: Rastreamento profissional de operações.
     """
     try:
         now = timezone.now()
-        cleaned_count = 0
-        failed_count = 0
+        stats = {
+            "videos_cleaned": 0,
+            "jobs_cleaned": 0,
+            "canceled_data_cleaned": 0,
+        }
 
-        # 1. Soft delete de vídeos originais com mais de 30 dias
-        cleaned_count += _cleanup_old_videos(now)
+        logger.info("[CLEANUP] Iniciando limpeza de dados antigos")
 
-        # 2. Soft delete de jobs falhos com mais de 7 dias
-        cleaned_count += _cleanup_failed_jobs(now)
+        # 1. Vídeos Originais (Iterativo pois envolve deleção de arquivo)
+        stats["videos_cleaned"] = _cleanup_old_videos(now)
 
-        # 3. Soft delete de dados após cancelamento (90 dias)
-        cleaned_count += _cleanup_canceled_subscriptions(now)
+        # 2. Jobs Falhos (Bulk Update - Muito mais rápido)
+        stats["jobs_cleaned"] = _cleanup_failed_jobs(now)
 
+        # 3. Cancelamentos (Cascata com limpeza de arquivos)
+        stats["canceled_data_cleaned"] = _cleanup_canceled_subscriptions(now)
+
+        logger.info(f"[CLEANUP] Limpeza concluída: {stats}")
         return {
             "status": "completed",
-            "cleaned_count": cleaned_count,
             "timestamp": now.isoformat(),
+            **stats
         }
 
     except Exception as e:
+        logger.error(f"[CLEANUP] Erro fatal na task de limpeza: {e}", exc_info=True)
         return {
             "status": "failed",
             "error": str(e),
-            "timestamp": timezone.now().isoformat(),
+            "timestamp": timezone.now().isoformat()
         }
 
 
 def _cleanup_old_videos(now: datetime) -> int:
-    """Soft delete de vídeos originais com mais de 30 dias."""
+    """
+    Remove vídeos originais antigos para economizar armazenamento.
+    
+    Estratégia:
+    1. Hard Delete: Apaga arquivo pesado do R2 (economia real).
+    2. Soft Delete: Marca registro no banco como deletado (auditoria).
+    
+    Performance: Usa .iterator(chunk_size=100) para não estourar RAM.
+    """
     thirty_days_ago = now - timedelta(days=30)
-
-    # Encontra vídeos criados há mais de 30 dias que ainda não foram deletados
-    old_videos = Video.objects.filter(
+    
+    logger.info("[CLEANUP-VIDEOS] Iniciando limpeza de vídeos com >30 dias")
+    
+    # Filtra vídeos aptos para limpeza
+    # .iterator() evita carregar 10k objetos na memória RAM de uma vez
+    old_videos_qs = Video.objects.filter(
         created_at__lt=thirty_days_ago,
-        is_deleted=False,  # Ainda não foi deletado
-        status__in=["completed", "failed"],  # Apenas vídeos processados
-    )
+        is_deleted=False
+    ).exclude(
+        # Não deletar se ainda estiver processando (improvável, mas seguro)
+        status__in=["processing", "uploading"]
+    ).iterator(chunk_size=100)
 
+    storage = R2StorageService()
     count = 0
-    for video in old_videos:
+    errors = 0
+
+    for video in old_videos_qs:
         try:
-            # Marca como deletado (soft delete)
+            # 1. Hard Delete: Apaga arquivo físico do R2 (Onde está o custo real)
+            if video.storage_path:
+                try:
+                    storage.delete_file(video.storage_path)
+                    logger.debug(f"[CLEANUP-VIDEOS] Arquivo R2 deletado: {video.storage_path}")
+                except Exception as e:
+                    logger.warning(
+                        f"[CLEANUP-VIDEOS] Falha ao apagar arquivo R2 "
+                        f"do vídeo {video.video_id}: {e}"
+                    )
+                    errors += 1
+
+            # 2. Soft Delete: Marca no banco (auditoria + recuperação possível)
             video.is_deleted = True
             video.deleted_at = now
-            video.save()
-
-            # Opcionalmente, deleta arquivo do R2 (pode ser comentado para manter backup)
-            # _delete_from_r2(video.storage_path)
-
+            video.storage_path = None  # Remove referência para indicar arquivo sumiu
+            video.save(update_fields=["is_deleted", "deleted_at", "storage_path"])
+            
             count += 1
+            
         except Exception as e:
-            print(f"Erro ao deletar vídeo {video.id}: {e}")
+            logger.error(f"[CLEANUP-VIDEOS] Erro ao limpar vídeo {video.video_id}: {e}")
+            errors += 1
             continue
 
+    logger.info(
+        f"[CLEANUP-VIDEOS] Concluído: {count} vídeos limpos, {errors} erros"
+    )
     return count
 
 
 def _cleanup_failed_jobs(now: datetime) -> int:
-    """Soft delete de jobs falhos com mais de 7 dias."""
+    """
+    Marca jobs antigos como deletados.
+    
+    Performance: Usa BULK UPDATE para performance (1 query em vez de N).
+    Isso transforma um loop que demoraria minutos em uma operação de milissegundos.
+    """
     seven_days_ago = now - timedelta(days=7)
 
-    # Encontra jobs falhos criados há mais de 7 dias
-    failed_jobs = Job.objects.filter(
+    logger.info("[CLEANUP-JOBS] Iniciando limpeza de jobs com >7 dias")
+
+    # .update() retorna o número de linhas afetadas
+    # Muito mais rápido que um loop com .save()
+    affected_rows = Job.objects.filter(
         created_at__lt=seven_days_ago,
         is_deleted=False,
-        status="failed",
+        status__in=["failed"]
+    ).update(
+        is_deleted=True,
+        deleted_at=now
     )
 
-    count = 0
-    for job in failed_jobs:
-        try:
-            # Marca como deletado (soft delete)
-            job.is_deleted = True
-            job.deleted_at = now
-            job.save()
-
-            count += 1
-        except Exception as e:
-            print(f"Erro ao deletar job {job.id}: {e}")
-            continue
-
-    return count
+    logger.info(f"[CLEANUP-JOBS] {affected_rows} jobs marcados como deletados")
+    return affected_rows
 
 
 def _cleanup_canceled_subscriptions(now: datetime) -> int:
-    """Soft delete de dados após cancelamento (90 dias)."""
+    """
+    Limpa dados de clientes que cancelaram há mais de 90 dias.
+    
+    Estratégia:
+    1. Busca IDs de orgs canceladas.
+    2. Itera clips para apagar arquivos R2 (economia).
+    3. Bulk update de vídeos (performance).
+    """
     ninety_days_ago = now - timedelta(days=90)
-
-    # Encontra organizações com cancelamento há mais de 90 dias
-    from ..models import Organization, Subscription
-
-    canceled_subs = Subscription.objects.filter(
-        status="canceled",
-        canceled_at__lt=ninety_days_ago,
+    
+    logger.info("[CLEANUP-CANCELED] Iniciando limpeza de dados cancelados >90 dias")
+    
+    # Busca IDs de orgs com cancelamento antigo
+    canceled_org_ids = list(
+        Subscription.objects.filter(
+            status="canceled",
+            canceled_at__lt=ninety_days_ago
+        ).values_list('organization_id', flat=True)
     )
+    
+    if not canceled_org_ids:
+        logger.info("[CLEANUP-CANCELED] Nenhuma organização para limpar")
+        return 0
+
+    logger.info(f"[CLEANUP-CANCELED] {len(canceled_org_ids)} orgs para limpar")
 
     count = 0
-    for sub in canceled_subs:
+    storage = R2StorageService()
+
+    # 1. Limpa Clips (Arquivos + DB)
+    # Usa select_related para otimizar SQL
+    clips_to_clean = Clip.objects.filter(
+        video__organization_id__in=canceled_org_ids,
+        is_deleted=False
+    ).select_related('video').iterator(chunk_size=100)
+
+    for clip in clips_to_clean:
         try:
-            org = sub.organization
-
-            # Soft delete de todos os vídeos da organização
-            videos = Video.objects.filter(
-                organization_id=org.id,
-                is_deleted=False,
-            )
-
-            for video in videos:
-                video.is_deleted = True
-                video.deleted_at = now
-                video.save()
-                count += 1
-
-            # Soft delete de todos os clips da organização
-            clips = Clip.objects.filter(
-                video__organization_id=org.id,
-                is_deleted=False,
-            )
-
-            for clip in clips:
-                clip.is_deleted = True
-                clip.deleted_at = now
-                clip.save()
-                count += 1
-
+            # Hard Delete do arquivo
+            if clip.storage_path:
+                try:
+                    storage.delete_file(clip.storage_path)
+                except Exception as e:
+                    logger.warning(
+                        f"[CLEANUP-CANCELED] Falha ao apagar clip {clip.clip_id}: {e}"
+                    )
+            
+            # Soft Delete do registro
+            clip.is_deleted = True
+            clip.deleted_at = now
+            clip.storage_path = None
+            clip.save(update_fields=["is_deleted", "deleted_at", "storage_path"])
+            count += 1
+            
         except Exception as e:
-            print(f"Erro ao deletar dados da organização {org.id}: {e}")
+            logger.error(f"[CLEANUP-CANCELED] Erro ao limpar clip {clip.clip_id}: {e}")
             continue
 
+    # 2. Marca Vídeos Restantes como deletados (Bulk Update - Rápido)
+    videos_affected = Video.objects.filter(
+        organization_id__in=canceled_org_ids,
+        is_deleted=False
+    ).update(
+        is_deleted=True,
+        deleted_at=now
+    )
+
+    count += videos_affected
+    logger.info(
+        f"[CLEANUP-CANCELED] Concluído: {count} recursos limpos "
+        f"({videos_affected} vídeos)"
+    )
     return count
-
-
-def _delete_from_r2(storage_path: str) -> None:
-    """Deleta arquivo do R2 (opcional, pode ser comentado)."""
-    try:
-        from .storage_service import R2StorageService
-        storage = R2StorageService()
-        storage.delete_file(storage_path)
-    except Exception as e:
-        print(f"Aviso: Falha ao deletar arquivo do R2: {e}")

@@ -1,168 +1,137 @@
-"""
-Task para geração de clips finais.
-Etapa: Clipping
-Corta vídeo original nos timestamps selecionados com legendas queimadas.
-"""
-
+import logging
 import os
 import uuid
 import subprocess
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 
-from ..models import Video, Clip, Transcript
+from ..models import Video, Clip, Transcript, Organization
 from .job_utils import update_job_status
 from ..services.storage_service import R2StorageService
 
+logger = logging.getLogger(__name__)
+
 
 @shared_task(bind=True, max_retries=5)
-def clip_generation_task(self, video_id: int) -> dict:
-    """
-    Gera clips finais com FFmpeg.
-    
-    Para cada clip selecionado:
-    1. Corta vídeo nos timestamps
-    2. Aplica legenda ASS queimada
-    3. Normaliza áudio
-    4. Exporta em MP4
-    5. Faz upload para R2
-    """
+def clip_generation_task(self, video_id: str) -> dict:
     try:
-        # Procura vídeo por video_id (UUID)
-        video = Video.objects.get(video_id=video_id)
+        logger.info(f"Iniciando renderização final para video_id: {video_id}")
         
-        # Obtém organização
-        from ..models import Organization
+        video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
         
-        video.status = "clipping"
-        video.current_step = "clipping"
+        video.status = "rendering"
+        video.current_step = "rendering"
         video.save()
 
-        # Obtém transcrição e clips selecionados
         transcript = Transcript.objects.filter(video=video).first()
         if not transcript:
             raise Exception("Transcrição não encontrada")
 
         selected_clips = transcript.selected_clips or []
         caption_files = transcript.caption_files or []
-
+        reframe_data = transcript.reframe_data or {}
+        
+        crop_config = reframe_data.get("crops", {}).get("9:16")
+        
         if not selected_clips:
-            raise Exception("Nenhum clip selecionado")
+            raise Exception("Nenhum clip para renderizar")
 
         output_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Arquivo normalizado da etapa anterior
         input_path = os.path.join(output_dir, "video_normalized.mp4")
-
         if not os.path.exists(input_path):
-            raise Exception("Arquivo de vídeo normalizado não encontrado")
+            raise Exception("Vídeo normalizado não encontrado")
 
-        # Gera cada clip
         storage = R2StorageService()
         generated_clips = []
 
+        total_clips = len(selected_clips)
+        
         for idx, clip in enumerate(selected_clips):
-            start_time = clip.get("start_time", 0)
-            end_time = clip.get("end_time", 0)
-            hook_title = clip.get("hook_title", f"Clip {idx + 1}")
+            progress = 85 + int((idx / total_clips) * 10)
+            update_job_status(str(video.video_id), "rendering", progress=progress, current_step=f"rendering_clip_{idx+1}")
 
-            # Arquivo ASS correspondente
-            ass_file = None
-            for cap in caption_files:
-                if cap.get("index") == idx:
-                    ass_file = cap.get("ass_file")
-                    break
+            clip_uuid = uuid.uuid4()
+            start_time = float(clip.get("start_time", 0))
+            end_time = float(clip.get("end_time", 0))
+            hook_title = clip.get("title") or clip.get("hook_title", f"Clip {idx + 1}")
+            
+            matched_caption = next((c for c in caption_files if c.get("index") == idx), None)
+            ass_file = matched_caption.get("ass_file") if matched_caption else None
 
-            # Gera clip com FFmpeg
-            clip_path = os.path.join(output_dir, f"clip_{idx}.mp4")
-            _generate_clip_with_ffmpeg(
+            clip_filename = f"clip_{clip_uuid}.mp4"
+            clip_path = os.path.join(output_dir, clip_filename)
+
+            _render_clip(
                 input_path=input_path,
                 output_path=clip_path,
                 start_time=start_time,
                 end_time=end_time,
-                ass_file=ass_file,
+                crop_config=crop_config,
+                ass_file=ass_file
             )
 
-            # Faz upload para R2
-            clip_id = uuid.uuid4()
+            file_size = os.path.getsize(clip_path)
             clip_storage_path = storage.upload_clip(
                 file_path=clip_path,
                 organization_id=str(video.organization_id),
                 video_id=str(video.video_id),
-                clip_id=str(clip_id),
+                clip_id=str(clip_uuid),
             )
 
-            # Extrai transcrição do clip baseado no timestamp
-            clip_transcript = _extract_clip_transcript(
-                transcript=transcript,
-                start_time=start_time,
-                end_time=end_time,
-            )
-
-            # Cria registro Clip no banco
-            clip_objeto = Clip.objects.create(
-                clip_id=clip_id,
+            # Transcrição já vem limpa do Gemini (sem timestamps)
+            transcript_text = clip.get("text", "")
+            
+            # Score vem do select_clips_task como "score" (0-100)
+            engagement_score = int(clip.get("score", 0))
+            
+            Clip.objects.create(
+                clip_id=clip_uuid,
                 video=video,
                 title=hook_title,
                 start_time=start_time,
                 end_time=end_time,
                 duration=end_time - start_time,
                 storage_path=clip_storage_path,
-                file_size=os.path.getsize(clip_path),
-                transcript=clip_transcript,
+                file_size=file_size,
+                transcript=transcript_text,
+                engagement_score=engagement_score,
+                confidence_score=0
             )
 
             generated_clips.append({
-                "clip_id": str(clip_id),
-                "title": hook_title,
-                "duration": end_time - start_time,
+                "clip_id": str(clip_uuid),
+                "url": clip_storage_path,
             })
 
-            # Limpa arquivo local
             if os.path.exists(clip_path):
                 os.remove(clip_path)
-            
-            # Dispara task de scoring para gerar scores e thumbnail
-            from .clip_scoring_task import clip_scoring_task
-            clip_scoring_task.apply_async(
-                args=[str(clip_id), str(video.video_id)],
-                queue=f"video.process.{org.plan}",
-            )
 
-        # Atualiza vídeo
-        video.last_successful_step = "clipping"
-        video.status = "captioning"
-        video.current_step = "captioning"
+        video.last_successful_step = "rendering"
+        video.status = "done"
+        video.current_step = "done"
+        video.completed_at = timezone.now()
         video.save()
         
-        # Atualiza job status
-        update_job_status(str(video.video_id), "captioning", progress=85, current_step="captioning")
-
-        # Dispara próxima task (captioning)
-        from .caption_clips_task import caption_clips_task
-        caption_clips_task.apply_async(
-            args=[str(video.video_id)],
-            queue=f"video.caption.{org.plan}",
-        )
+        update_job_status(str(video.video_id), "done", progress=100, current_step="done")
 
         return {
             "video_id": str(video.video_id),
-            "status": "captioning",
-            "clips_generated": len(generated_clips),
-            "clips": generated_clips,
+            "status": "done",
+            "clips_count": len(generated_clips),
         }
 
     except Video.DoesNotExist:
         return {"error": "Video not found", "status": "failed"}
     except Exception as e:
-        video.status = "failed"
-        video.current_step = "clipping"
-        video.error_code = "CLIPPING_ERROR"
-        video.error_message = str(e)
-        video.retry_count += 1
-        video.save()
+        logger.error(f"Erro na renderização final: {e}", exc_info=True)
+        if video:
+            video.status = "failed"
+            video.error_message = str(e)
+            video.save()
 
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)
@@ -170,81 +139,51 @@ def clip_generation_task(self, video_id: int) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _extract_clip_transcript(transcript: Transcript, start_time: float, end_time: float) -> str:
-    """
-    Extrai transcrição do clip baseado no timestamp.
-    
-    Args:
-        transcript: Objeto Transcript
-        start_time: Tempo inicial em segundos
-        end_time: Tempo final em segundos
-        
-    Returns:
-        Texto da transcrição do clip
-    """
-    segments = transcript.segments or []
-    clip_text = []
-    
-    for segment in segments:
-        seg_start = segment.get("start", 0)
-        seg_end = segment.get("end", 0)
-        seg_text = segment.get("text", "")
-        
-        # Se segmento está dentro do intervalo do clip
-        if seg_start >= start_time and seg_end <= end_time:
-            clip_text.append(seg_text)
-        # Se segmento sobrepõe parcialmente
-        elif seg_start < end_time and seg_end > start_time:
-            clip_text.append(seg_text)
-    
-    return " ".join(clip_text).strip()
-
-
-def _generate_clip_with_ffmpeg(
+def _render_clip(
     input_path: str,
     output_path: str,
     start_time: float,
     end_time: float,
+    crop_config: dict = None,
     ass_file: str = None,
 ) -> None:
-    """
-    Gera clip com FFmpeg.
-    
-    Aplica:
-    - Corte nos timestamps
-    - Legenda ASS queimada (se disponível)
-    - Normalização de áudio
-    - Codec H.264
-    """
     ffmpeg_path = getattr(settings, "FFMPEG_PATH", "ffmpeg")
-    ffmpeg_timeout = int(getattr(settings, "FFMPEG_TIMEOUT", 600))
-
     duration = end_time - start_time
 
-    # Constrói comando FFmpeg
+    filter_chain = []
+    
+    if crop_config:
+        w = crop_config.get("width")
+        h = crop_config.get("height")
+        x = crop_config.get("x")
+        y = crop_config.get("y")
+        filter_chain.append(f"crop={w}:{h}:{x}:{y}")
+
+    if ass_file and os.path.exists(ass_file):
+        clean_ass_path = ass_file.replace("\\", "/").replace(":", "\\:")
+        filter_chain.append(f"ass='{clean_ass_path}'")
+
+    vf_arg = ",".join(filter_chain)
+
     cmd = [
         ffmpeg_path,
         "-y",
-        "-ss", str(start_time),
+        "-ss", f"{start_time:.3f}", 
+        "-t", f"{duration:.3f}",
         "-i", input_path,
-        "-t", str(duration),
     ]
 
-    # Adiciona filtro de legenda se disponível
-    if ass_file and os.path.exists(ass_file):
-        # Escapa o caminho para FFmpeg
-        ass_path = ass_file.replace("\\", "/")
-        cmd.extend([
-            "-vf", f"ass={ass_path}",
-        ])
+    if vf_arg:
+        cmd.extend(["-vf", vf_arg])
 
-    # Codec e áudio
     cmd.extend([
         "-c:v", "libx264",
-        "-preset", "fast",
+        "-preset", "slow",
+        "-crf", "21",
         "-c:a", "aac",
-        "-b:a", "128k",
-        output_path,
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        output_path
     ])
 
     try:
@@ -252,13 +191,13 @@ def _generate_clip_with_ffmpeg(
             cmd,
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=ffmpeg_timeout,
+            stderr=subprocess.PIPE,
+            text=True
         )
     except subprocess.CalledProcessError as e:
-        raise Exception(f"FFmpeg falhou ao gerar clip: {e}")
-    except subprocess.TimeoutExpired:
-        raise Exception("Geração de clip excedeu o tempo limite")
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"FFmpeg Render falhou: {error_msg}")
+        raise Exception(f"Falha no render do clip: {error_msg}")
 
     if not os.path.exists(output_path):
-        raise Exception("Arquivo de clip não foi criado")
+        raise Exception("Arquivo final não foi criado pelo FFmpeg")

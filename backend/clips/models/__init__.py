@@ -15,6 +15,8 @@ from .clip_performance import ClipPerformance
 from .transcript_segment import TranscriptSegment
 from .caption import Caption
 from .billing_event import BillingEvent
+from .embedding_pattern import EmbeddingPattern
+from .embedding_cache import EmbeddingCache
 
 __all__ = (
     "Video",
@@ -34,4 +36,6 @@ __all__ = (
     "TranscriptSegment",
     "Caption",
     "BillingEvent",
+    "EmbeddingPattern",
+    "EmbeddingCache",
 )

@@ -6,6 +6,7 @@ from .analyze_semantic_task import analyze_semantic_task
 from .embed_classify_task import embed_classify_task
 from .select_clips_task import select_clips_task
 from .reframe_video_task import reframe_video_task
+from .clip_scoring_task import clip_scoring_task
 from .caption_clips_task import caption_clips_task
 from .clip_generation_task import clip_generation_task
 from .post_to_social_task import post_to_social_task
@@ -21,6 +22,7 @@ __all__ = (
     "embed_classify_task",
     "select_clips_task",
     "reframe_video_task",
+    "clip_scoring_task",
     "caption_clips_task",
     "clip_generation_task",
     "post_to_social_task",

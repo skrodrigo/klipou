@@ -1,45 +1,30 @@
-"""
-Task para embedding e classificação com Gemini.
-Etapa: Embedding/Classifying
-Usa Gemini API para gerar embeddings do texto dos trechos candidatos.
-"""
-import os
+import logging
 from celery import shared_task
 from django.conf import settings
-
-from ..models import Video, Transcript
-from .job_utils import update_job_status
+import numpy as np
+from numpy.linalg import norm
 import google.generativeai as genai
+
+from ..models import Video, Transcript, Organization
+from ..services.embedding_cache_service import EmbeddingCacheService
+from .job_utils import update_job_status
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_VIRAL_EMBEDDING = None
 
 
 @shared_task(bind=True, max_retries=5)
-def embed_classify_task(self, video_id: int) -> dict:
-    """
-    Embedding e classificação com Gemini.
-    
-    Usa Gemini API para gerar embeddings do texto dos trechos candidatos.
-    Compara embeddings com:
-    - Padrões internos (embeddings de bons clips históricos)
-    - Histórico de bons clips (feedback do usuário)
-    
-    Ajusta score final combinando:
-    - Score Gemini (análise semântica)
-    - Similaridade vetorial (embeddings)
-    - Score de engajamento
-    """
+def embed_classify_task(self, video_id: str) -> dict:
     try:
-        # Procura vídeo por video_id (UUID)
         video = Video.objects.get(video_id=video_id)
-        
-        # Obtém organização
-        from ..models import Organization
         org = Organization.objects.get(organization_id=video.organization_id)
         
         video.status = "embedding"
         video.current_step = "embedding"
         video.save()
+        update_job_status(str(video.video_id), "embedding", progress=55, current_step="embedding")
 
-        # Obtém transcrição e análise
         transcript = Transcript.objects.filter(video=video).first()
         if not transcript:
             raise Exception("Transcrição não encontrada")
@@ -48,56 +33,53 @@ def embed_classify_task(self, video_id: int) -> dict:
         candidates = analysis_data.get("candidates", [])
 
         if not candidates:
-            raise Exception("Nenhum candidato de clip encontrado")
+            logger.warning(f"Sem candidatos para embedding no vídeo {video_id}")
+        else:
+            api_key = getattr(settings, "GEMINI_API_KEY", None)
+            if not api_key:
+                raise Exception("GEMINI_API_KEY não configurada")
 
-        # Gera embeddings para cada candidato
-        api_key = getattr(settings, "GEMINI_API_KEY", None)
-        if not api_key:
-            raise Exception("GEMINI_API_KEY não configurada")
+            genai.configure(api_key=api_key)
 
-        genai.configure(api_key=api_key)
+            texts = [c.get("text", "") for c in candidates if c.get("text")]
+            
+            if texts:
+                embeddings = _get_batch_embeddings(texts)
+                
+                reference_patterns = _get_reference_patterns(org.organization_id)
 
-        # Processa embeddings
-        for candidate in candidates:
-            text = candidate.get("text", "")
-            if not text:
-                continue
+                text_idx = 0
+                for candidate in candidates:
+                    if not candidate.get("text"):
+                        continue
+                    
+                    try:
+                        embedding = embeddings[text_idx]
+                        text_idx += 1
+                        
+                        candidate["embedding"] = embedding
+                        
+                        similarity_score = _calculate_similarity(embedding, reference_patterns)
+                        candidate["similarity_score"] = similarity_score
+                        
+                        engagement_score = int(candidate.get("engagement_score", 0) * 10)
+                        candidate["adjusted_engagement_score"] = _adjust_score(
+                            engagement_score=engagement_score,
+                            similarity_score=similarity_score,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Falha ao processar métricas do candidato: {e}")
 
-            try:
-                # Gera embedding com Gemini
-                embedding = _get_embedding(text)
-                candidate["embedding"] = embedding
-
-                # Calcula similaridade com padrões históricos
-                similarity_score = _calculate_similarity(embedding)
-                candidate["similarity_score"] = similarity_score
-
-                # Ajusta score final
-                original_engagement = int(candidate.get("engagement_score", 0) * 10)
-                adjusted_score = _adjust_score(
-                    engagement_score=original_engagement,
-                    similarity_score=similarity_score,
-                )
-                candidate["adjusted_engagement_score"] = adjusted_score
-
-            except Exception as e:
-                print(f"Aviso: Falha ao processar embedding para candidato: {e}")
-                # Continua com próximo candidato
-
-        # Armazena análise atualizada
         transcript.analysis_data = analysis_data
         transcript.save()
 
-        # Atualiza vídeo
         video.last_successful_step = "embedding"
         video.status = "selecting"
         video.current_step = "selecting"
         video.save()
         
-        # Atualiza job status
         update_job_status(str(video.video_id), "selecting", progress=60, current_step="selecting")
 
-        # Dispara próxima task (selecting)
         from .select_clips_task import select_clips_task
         select_clips_task.apply_async(
             args=[str(video.video_id)],
@@ -113,12 +95,11 @@ def embed_classify_task(self, video_id: int) -> dict:
     except Video.DoesNotExist:
         return {"error": "Video not found", "status": "failed"}
     except Exception as e:
-        video.status = "failed"
-        video.current_step = "embedding"
-        video.error_code = "EMBEDDING_ERROR"
-        video.error_message = str(e)
-        video.retry_count += 1
-        video.save()
+        logger.error(f"Erro no embedding {video_id}: {e}", exc_info=True)
+        if video:
+            video.status = "failed"
+            video.error_message = str(e)
+            video.save()
 
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)
@@ -126,45 +107,126 @@ def embed_classify_task(self, video_id: int) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _get_embedding(text: str) -> list:
-    """Gera embedding com Gemini API."""
-    try:
-        model = genai.GenerativeModel("embedding-001")
-        result = genai.embed_content(
-            model="models/embedding-001",
-            content=text,
-        )
-        return result["embedding"]
-    except Exception as e:
-        raise Exception(f"Erro ao gerar embedding: {e}")
+def _get_batch_embeddings(texts: list[str], output_dimensionality: int = 768) -> list[list]:
+    if not texts:
+        return []
 
-
-def _calculate_similarity(embedding: list) -> float:
-    """
-    Calcula similaridade com padrões históricos.
+    final_embeddings = [None] * len(texts)
     
-    Em produção, compararia com embeddings de bons clips históricos.
-    Por enquanto, retorna score baseado em características do embedding.
-    """
-    if not embedding:
+    texts_to_process = []
+    indices_to_process = []
+    
+    for idx, text in enumerate(texts):
+        cached = EmbeddingCacheService.get_embedding(text)
+        if cached:
+            final_embeddings[idx] = cached
+        else:
+            texts_to_process.append(text)
+            indices_to_process.append(idx)
+    
+    if not texts_to_process:
+        return final_embeddings
+    
+    try:
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=texts_to_process,
+            task_type="SEMANTIC_SIMILARITY"
+        )
+        
+        embedding_list = result.get('embedding', []) if isinstance(result, dict) else result.embeddings
+
+        for i, embedding_obj in enumerate(embedding_list):
+            if hasattr(embedding_obj, 'values'):
+                vals = embedding_obj.values
+            elif isinstance(embedding_obj, dict):
+                vals = embedding_obj.get('values')
+            else:
+                vals = embedding_obj
+            
+            normalized = _normalize_embedding(vals)
+            
+            original_idx = indices_to_process[i]
+            final_embeddings[original_idx] = normalized
+            
+            EmbeddingCacheService.save_embedding(texts_to_process[i], normalized)
+        
+        return final_embeddings
+
+    except Exception as e:
+        logger.error(f"Erro na API Gemini Embedding: {e}")
+        raise e
+
+
+def _normalize_embedding(embedding: list) -> list:
+    try:
+        embedding_np = np.array(embedding, dtype=np.float32)
+        embedding_norm = norm(embedding_np)
+        if embedding_norm == 0:
+            return embedding
+        return (embedding_np / embedding_norm).tolist()
+    except:
+        return embedding
+
+
+def _get_reference_patterns(organization_id: str) -> list:
+    try:
+        from ..models import EmbeddingPattern
+        patterns = list(EmbeddingPattern.objects.filter(
+            organization_id=organization_id
+        ).values_list('embedding', flat=True)[:10])
+        
+        if patterns:
+            return [
+                (np.array(p, dtype=np.float32) / (norm(np.array(p, dtype=np.float32)) or 1.0))
+                for p in patterns
+            ]
+            
+    except Exception as e:
+        logger.warning(f"Erro ao carregar padrões da org: {e}")
+
+    return [_get_default_viral_embedding()]
+
+
+def _get_default_viral_embedding() -> np.ndarray:
+    global _DEFAULT_VIRAL_EMBEDDING
+    if _DEFAULT_VIRAL_EMBEDDING is not None:
+        return _DEFAULT_VIRAL_EMBEDDING
+    
+    viral_concept = "Viral video, funny moment, engaging clip, high retention, interesting fact, emotional hook"
+    
+    try:
+        embeds = _get_batch_embeddings([viral_concept])
+        if embeds and embeds[0]:
+            _DEFAULT_VIRAL_EMBEDDING = np.array(embeds[0], dtype=np.float32)
+            return _DEFAULT_VIRAL_EMBEDDING
+    except Exception as e:
+        logger.error(f"Falha ao gerar embedding viral padrão: {e}")
+    
+    return np.random.randn(768).astype(np.float32)
+
+
+def _calculate_similarity(embedding: list, reference_patterns: list) -> float:
+    if not embedding or not reference_patterns:
         return 0.5
 
-    # Implementação simplificada
-    # Em produção, compararia com banco de embeddings históricos
-    # usando similaridade de cosseno ou outra métrica
-
-    # Score baseado em magnitude do embedding
-    magnitude = sum(x ** 2 for x in embedding) ** 0.5
-    similarity = min(1.0, magnitude / 10.0)  # Normaliza
-
-    return similarity
+    try:
+        embedding_np = np.array(embedding, dtype=np.float32)
+        
+        similarities = [
+            np.dot(embedding_np, pattern) for pattern in reference_patterns
+        ]
+        
+        score = np.mean(similarities)
+        
+        normalized = (score + 1.0) / 2.0
+        
+        return float(np.clip(normalized, 0.0, 1.0))
+    except Exception as e:
+        logger.warning(f"Erro cálculo similaridade: {e}")
+        return 0.5
 
 
 def _adjust_score(engagement_score: int, similarity_score: float) -> int:
-    """
-    Ajusta score final combinando:
-    - Score de engajamento (70%)
-    - Similaridade vetorial (30%)
-    """
     adjusted = (engagement_score * 0.7) + (similarity_score * 100 * 0.3)
-    return int(min(100, max(0, adjusted)))
+    return int(np.clip(adjusted, 0, 100))

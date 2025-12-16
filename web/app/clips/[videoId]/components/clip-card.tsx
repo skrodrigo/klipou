@@ -8,7 +8,8 @@ import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Select, SelectTrigger, SelectContent, SelectItem } from "@/components/ui/select"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Download01Icon, Share03Icon, SentIcon, GlobeIcon, LockIcon } from "@hugeicons/core-free-icons"
+import { Download01Icon, Share03Icon, SentIcon, GlobeIcon, LockIcon, PlayIcon, PauseIcon } from "@hugeicons/core-free-icons"
+import { useRef, useState } from "react"
 import { ClipActions } from "./clip-actions"
 import type { Clip } from "@/infra/videos/videos"
 
@@ -43,6 +44,20 @@ export function ClipCard({
   isShareDialogOpen,
   onShareDialogOpenChange,
 }: ClipCardProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  const togglePlayPause = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause()
+      } else {
+        videoRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
+    }
+  }
+
   return (
     <div id={`clip-${clip.clip_id}`} className="flex flex-col lg:flex-row gap-8 items-start group">
       {/* Left Column: Vertical Video Player */}
@@ -55,12 +70,27 @@ export function ClipCard({
             />
           </div>
           {clip.video_url ? (
-            <video
-              src={clip.video_url}
-              className="w-full h-full object-cover"
-              controls
-              controlsList="nodownload"
-            />
+            <>
+              <video
+                ref={videoRef}
+                src={clip.video_url}
+                className="w-full h-full object-cover"
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+              />
+              <button
+                onClick={togglePlayPause}
+                className="absolute inset-0 flex items-center justify-center hover:bg-black/50 transition-colors hover:opacity-100 opacity-0 duration-700ms"
+              >
+                <div className="bg-background cursor-pointer rounded-full p-4 transition-colors duration-700ms">
+                  <HugeiconsIcon
+                    icon={isPlaying ? PauseIcon : PlayIcon}
+                    size={32}
+                    className="text-primary"
+                  />
+                </div>
+              </button>
+            </>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-700 bg-gradient-to-br from-zinc-800 to-zinc-900">
               <p className="text-xs text-zinc-600">Vídeo não disponível</p>
@@ -82,7 +112,11 @@ export function ClipCard({
         {/* Stats & Primary Actions Row */}
         <div className="flex items-center flex-wrap gap-2">
           <div className="flex items-baseline gap-1">
-            <span className="text-4xl font-bold text-white tracking-tighter">9.8</span>
+            <span className="text-4xl font-bold text-white tracking-tighter">
+              {clip.engagement_score !== undefined && clip.engagement_score !== null
+                ? (clip.engagement_score / 10).toFixed(1)
+                : "N/A"}
+            </span>
             <span className="text-sm font-medium text-zinc-500">/10</span>
           </div>
 
