@@ -1,5 +1,5 @@
 from django.urls import path, re_path
-
+ 
 from .views.videos_list_create_view import videos_list_create
 from .views.video_clips_list_view import video_clips_list
 from .views.video_progress_sse_view import video_progress_sse
@@ -7,6 +7,7 @@ from .views.video_status_update_view import video_status_update_view
 from .views.video_management_view import get_video_details, rename_video, delete_video
 from .views.job_views import get_job_status, list_jobs, sse_job_status
 from .views.clip_views import download_clip, delete_clip, submit_clip_feedback, get_clip_details, rename_clip, duplicate_clip
+from .views.trim_views import get_video_trim_context, update_clip_trim
 from .views.stripe_webhook_view import stripe_webhook
 from .views.schedule_views import list_schedules, create_schedule, update_schedule, cancel_schedule
 from .views.integration_views import list_integrations, connect_integration, oauth_callback, disconnect_integration
@@ -51,7 +52,11 @@ urlpatterns = [
     path("clips/<uuid:clip_id>/delete/", delete_clip, name="delete-clip"),
     path("clips/<uuid:clip_id>/rename/", rename_clip, name="rename-clip"),
     path("clips/<uuid:clip_id>/duplicate/", duplicate_clip, name="duplicate-clip"),
+    path("clips/<uuid:clip_id>/trim/", update_clip_trim, name="update-clip-trim"),
     path("clips/<uuid:clip_id>/feedback/", submit_clip_feedback, name="submit-clip-feedback"),
+
+    # Trim (context for editing clip cut)
+    path("videos/<uuid:video_id>/trim-context/", get_video_trim_context, name="get-video-trim-context"),
     
     # Stripe Webhook
     path("webhooks/stripe/", stripe_webhook, name="stripe-webhook"),

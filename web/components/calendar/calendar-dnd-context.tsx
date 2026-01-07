@@ -23,7 +23,7 @@ import {
   useState,
 } from "react";
 import type { CalendarEvent } from "./types";
-import { EventItem } from "../event-item";
+import { EventItem } from "./event-item";
 
 
 // Define the context type
@@ -353,7 +353,6 @@ export function CalendarDndProvider({
                 height: eventHeight ? `${eventHeight}px` : "auto",
                 width:
                   isMultiDay && multiDayWidth ? `${multiDayWidth}%` : "100%",
-                // Remove the transform that was causing the shift
               }}
             >
               <EventItem

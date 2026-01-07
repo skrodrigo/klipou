@@ -129,6 +129,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\\d+$",
+    r"^http://127\\.0\\.0\\.1:\\d+$",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
@@ -150,6 +155,7 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
+    "x-organization-id",
 ]
 
 # Session Configuration
@@ -165,6 +171,8 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 # Cloudflare R2 Configuration

@@ -77,6 +77,14 @@ def _detect_smart_crop(video_path: str) -> dict:
     except ImportError:
         raise Exception("Instale: pip install opencv-python mediapipe")
 
+    if not hasattr(mp, "solutions"):
+        mp_file = getattr(mp, "_file_", None)
+        raise Exception(
+            "Mediapipe importado não possui 'solutions'. Possível conflito de módulo/instalação. "
+            f"Arquivo importado: {mp_file}. Garanta que o pacote 'mediapipe' oficial está instalado e "
+            "que não existe arquivo/pasta local chamada 'mediapipe'."
+        )
+
     mp_face_detection = mp.solutions.face_detection
     
     cap = cv2.VideoCapture(video_path)

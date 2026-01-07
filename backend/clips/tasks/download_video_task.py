@@ -72,6 +72,18 @@ def download_video_task(self, video_id: str) -> dict:
 
             if not video.title:
                 video.title = _guess_title_from_ydl_info(info, fallback=f"Video from {video.source_type or 'url'}")
+
+            if not video.storage_path:
+                try:
+                    uploaded_key = storage.upload_video(
+                        file_path=video_path,
+                        organization_id=str(video.organization_id),
+                        video_id=str(video.video_id),
+                        original_filename=video.original_filename or "video_original.mp4",
+                    )
+                    video.storage_path = uploaded_key
+                except Exception as e:
+                    logger.warning(f"Falha ao fazer upload do vídeo original para o R2: {e}")
         else:
             raise Exception("Nenhuma fonte de vídeo disponível (storage_path ou source_url)")
 

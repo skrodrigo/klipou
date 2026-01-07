@@ -1,21 +1,23 @@
 from typing import Any, Dict, List
 
-from ..models import Clip
+from ..models import Clip, Video
 from .storage_service import R2StorageService
 
 
 def list_video_clips(video_id: str) -> List[Dict[str, Any]]:
-    """
-    Lista todos os clips de um vídeo específico com URLs assinadas.
-    
-    Args:
-        video_id: UUID do vídeo
-        
-    Returns:
-        Lista de dicts com clip_id, title, video_url, thumbnail_url, transcript, etc.
-    """
-    clips_qs = Clip.objects.filter(video_id=video_id).order_by("-engagement_score", "-created_at")
+    clips_qs = Clip.objects.filter(video_id=video_id).select_related("video").order_by("-engagement_score", "-created_at")
     storage_service = R2StorageService()
+
+    full_video_url = None
+    try:
+        video = Video.objects.get(video_id=video_id)
+        if video.storage_path:
+            try:
+                full_video_url = storage_service.get_public_url(video.storage_path)
+            except Exception:
+                full_video_url = None
+    except Video.DoesNotExist:
+        full_video_url = None
     
     clips_data = []
     for clip in clips_qs:
@@ -30,6 +32,7 @@ def list_video_clips(video_id: str) -> List[Dict[str, Any]]:
             "confidence_score": clip.confidence_score,
             "created_at": clip.created_at.isoformat(),
             "updated_at": clip.updated_at.isoformat(),
+            "full_video_url": full_video_url,
         }
         
         # Gera URL pública fixa para vídeo (exibição no frontend)

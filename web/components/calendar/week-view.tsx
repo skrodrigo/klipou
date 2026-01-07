@@ -19,14 +19,14 @@ import {
 import type React from "react";
 import { useMemo } from "react";
 
-import { DraggableEvent } from "@/components/draggable-event";
-import { DroppableCell } from "@/components/droppable-cell";
-import { EventItem } from "@/components/event-item";
 import { WeekCellsHeight, EndHour, StartHour } from "@/hooks/constants";
 import { cn } from "@/lib/utils";
 import type { CalendarEvent } from "./types";
 import { isMultiDayEvent } from "./utils";
 import { useCurrentTimeIndicator } from "@/hooks/use-current-time-indicator";
+import { EventItem } from "./event-item";
+import { DraggableEvent } from "./draggable-event";
+import { DroppableCell } from "./droppable-cell";
 
 interface WeekViewProps {
   currentDate: Date;

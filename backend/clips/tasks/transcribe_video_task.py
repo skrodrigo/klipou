@@ -2,9 +2,11 @@ import logging
 import os
 import json
 import subprocess
+import gc
+import torch
+import time
 from celery import shared_task
 from django.conf import settings
-import google.generativeai as genai
 
 from ..models import Video, Transcript, Organization
 from .job_utils import get_plan_tier, update_job_status
@@ -12,35 +14,124 @@ from ..services.storage_service import R2StorageService
 
 logger = logging.getLogger(__name__)
 
+_model_cache = None
 _gemini_configured = False
+
+
+def _should_use_cuda() -> bool:
+    forced = getattr(settings, "WHISPER_DEVICE", None)
+    if not (isinstance(forced, str) and forced.strip()):
+        return False
+
+    forced_norm = forced.strip().lower()
+    if forced_norm != "cuda":
+        return False
+
+    if not torch.cuda.is_available():
+        return False
+
+    try:
+        torch.zeros(1, device="cuda")
+    except Exception:
+        return False
+
+    cudnn_ok = True
+    try:
+        cudnn_ok = bool(torch.backends.cudnn.is_available())
+    except Exception:
+        cudnn_ok = False
+
+    return cudnn_ok
+
+
+def _get_whisper_model():
+    global _model_cache
+    if _model_cache is not None:
+        return _model_cache
+
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        raise RuntimeError("Biblioteca 'faster-whisper' não encontrada. Instale: pip install faster-whisper")
+
+    model_size = getattr(settings, "WHISPER_MODEL", "small")
+    local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
+
+    for noisy_logger in ("httpx", "httpcore", "huggingface_hub"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+    device = "cuda" if _should_use_cuda() else "cpu"
+
+    compute_type = "float16" if device == "cuda" else "int8"
+
+    model_source = local_model_dir or model_size
+
+    logger.debug(
+        "Carregando Faster-Whisper '%s' em %s (%s)%s",
+        model_size,
+        device,
+        compute_type,
+        f" | model_dir: {local_model_dir}" if local_model_dir else "",
+    )
+
+    lock_dir = getattr(settings, "WHISPER_LOCK_DIR", getattr(settings, "BASE_DIR", "/tmp"))
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, f"faster_whisper_{str(model_size).replace('/', '_')}.lock")
+
+    start_wait = time.time()
+    timeout_s = int(getattr(settings, "WHISPER_INIT_LOCK_TIMEOUT", 600) or 600)
+    have_lock = False
+    while not have_lock:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            have_lock = True
+        except FileExistsError:
+            if time.time() - start_wait > timeout_s:
+                raise TimeoutError(f"Timeout aguardando lock do Whisper em {lock_path}")
+            time.sleep(0.25)
+
+    try:
+        _model_cache = WhisperModel(
+            model_source,
+            device=device,
+            compute_type=compute_type,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Falha interna Faster-Whisper: {e}")
+    finally:
+        if have_lock:
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+    return _model_cache
 
 
 @shared_task(bind=True, max_retries=3)
 def transcribe_video_task(self, video_id: str) -> dict:
     audio_path = None
     try:
-        logger.info(f"Iniciando transcrição para video_id: {video_id}")
-        
+        logger.debug("Iniciando transcrição para video_id=%s", video_id)
+
         video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
-        
+
         video.status = "transcribing"
         video.current_step = "transcribing"
         video.save()
         update_job_status(str(video.video_id), "transcribing", progress=35, current_step="transcribing")
 
         video_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
-        
         video_path = os.path.join(video_dir, "video_normalized.mp4")
+
         if not os.path.exists(video_path):
-            raise Exception("Arquivo video_normalized.mp4 não encontrado")
+            raise FileNotFoundError("Arquivo video_normalized.mp4 não encontrado")
 
         audio_path = _extract_audio_with_ffmpeg(video_path, video_dir)
 
         transcript_data = _transcribe_with_whisper(audio_path)
 
-        # Opcional: pós-processamento com Gemini para corrigir gírias/jargões/metáforas.
-        # Mantém timestamps (start/end) e word-timestamps; altera apenas os textos.
         if bool(getattr(settings, "GEMINI_REFINE_WHISPER_TRANSCRIPT", False)):
             try:
                 transcript_data = _refine_transcript_with_gemini(transcript_data)
@@ -75,11 +166,15 @@ def transcribe_video_task(self, video_id: str) -> dict:
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         video.last_successful_step = "transcribing"
         video.status = "analyzing"
         video.current_step = "analyzing"
         video.save()
-        
+
         update_job_status(str(video.video_id), "analyzing", progress=40, current_step="analyzing")
 
         from .analyze_semantic_task import analyze_semantic_task
@@ -99,15 +194,21 @@ def transcribe_video_task(self, video_id: str) -> dict:
     except Exception as e:
         logger.error(f"Erro transcrição {video_id}: {str(e)}", exc_info=True)
         if video:
+
             video.status = "failed"
             video.error_message = str(e)
             video.save()
-            
+
             if audio_path and os.path.exists(audio_path):
                 try:
                     os.remove(audio_path)
                 except:
                     pass
+
+            # Limpeza de memória mesmo no erro
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=e, countdown=2 ** self.request.retries)
@@ -119,16 +220,14 @@ def _extract_audio_with_ffmpeg(video_path: str, output_dir: str) -> str:
     audio_path = os.path.join(output_dir, "audio_temp.wav")
     ffmpeg_path = getattr(settings, "FFMPEG_PATH", "ffmpeg")
     max_seconds = getattr(settings, "WHISPER_MAX_AUDIO_SECONDS", None)
-    
+
     cmd = [
         ffmpeg_path, "-y",
         "-hide_banner",
         "-loglevel", "error",
         "-i", video_path,
-        # Seleciona apenas 1 stream de áudio (se existir). Evita pegar streams estranhas/corrompidas.
         "-map", "0:a:0?",
         "-vn",
-        # Tenta ignorar erros de decode em mídias com áudio quebrado.
         "-err_detect", "ignore_err",
         "-fflags", "+discardcorrupt",
         "-acodec", "pcm_s16le",
@@ -138,7 +237,6 @@ def _extract_audio_with_ffmpeg(video_path: str, output_dir: str) -> str:
     ]
 
     if isinstance(max_seconds, (int, float)) and max_seconds and max_seconds > 0:
-        # Coloca -t antes do output para limitar o processamento.
         cmd.insert(-1, str(float(max_seconds)))
         cmd.insert(-1, "-t")
 
@@ -146,75 +244,76 @@ def _extract_audio_with_ffmpeg(video_path: str, output_dir: str) -> str:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return audio_path
     except subprocess.CalledProcessError as e:
-        raise Exception(f"Erro FFmpeg áudio: {e.stderr.decode() if e.stderr else str(e)}")
+        raise RuntimeError(f"Erro FFmpeg áudio: {e.stderr.decode() if e.stderr else str(e)}")
 
 
 def _transcribe_with_whisper(audio_path: str) -> dict:
-    try:
-        import whisper
-        import torch
-    except ImportError:
-        raise Exception("Instale: pip install openai-whisper torch")
+    global _model_cache
+    model = _get_whisper_model()
+    whisper_word_timestamps = bool(getattr(settings, "WHISPER_WORD_TIMESTAMPS", True))
+    beam_size = int(getattr(settings, "WHISPER_BEAM_SIZE", 5))
 
-    model_size = getattr(settings, "WHISPER_MODEL")
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    logger.info(f"Carregando Whisper modelo '{model_size}' em '{device}'...")
-    
-    try:
-        model = whisper.load_model(model_size, device=device)
-
-        whisper_word_timestamps = bool(getattr(settings, "WHISPER_WORD_TIMESTAMPS", True))
-
-        use_fp16 = bool(getattr(settings, "WHISPER_FP16", True)) if device == "cuda" else False
-
-        result = model.transcribe(
+    def _run(model_to_use):
+        return model_to_use.transcribe(
             audio_path,
+            beam_size=beam_size,
             word_timestamps=whisper_word_timestamps,
-            beam_size=int(getattr(settings, "WHISPER_BEAM_SIZE", 1)),
-            best_of=int(getattr(settings, "WHISPER_BEST_OF", 1)),
-            fp16=use_fp16,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
         )
 
+    try:
+        segments_generator, info = _run(model)
     except Exception as e:
-        if device == "cuda":
-            torch.cuda.empty_cache()
-        raise Exception(f"Falha interna Whisper: {e}")
-
-    segments = result.get("segments", [])
-    full_text = result.get("text", "").strip()
-    language = result.get("language", "en")
+        msg = str(e)
+        is_cuda_oom = "CUDA" in msg and ("out of memory" in msg.lower() or "cublas" in msg.lower())
+        if is_cuda_oom and getattr(model, "device", None) == "cuda":
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            from faster_whisper import WhisperModel
+            model_size = getattr(settings, "WHISPER_MODEL", "small")
+            local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
+            model_source = local_model_dir or model_size
+            _model_cache = WhisperModel(model_source, device="cpu", compute_type="int8")
+            segments_generator, info = _run(_model_cache)
+        else:
+            raise RuntimeError(f"Falha interna Faster-Whisper: {e}")
 
     structured_segments = []
-    
-    for seg in segments:
-        words = []
-        if "words" in seg:
-            for w in seg["words"]:
-                words.append({
-                    "word": w["word"].strip(),
-                    "start": w["start"],
-                    "end": w["end"],
-                    "score": w.get("probability", 0)
-                })
-        
-        structured_segments.append({
-            "start": seg["start"],
-            "end": seg["end"],
-            "text": seg["text"].strip(),
-            "words": words
-        })
+    full_text_parts = []
+    for seg in segments_generator:
+        text_stripped = seg.text.strip()
+        if text_stripped:
+            full_text_parts.append(text_stripped)
 
-    if device == "cuda":
-        del model
-        torch.cuda.empty_cache()
+        words = []
+        if seg.words:
+            for w in seg.words:
+                words.append(
+                    {
+                        "word": w.word.strip(),
+                        "start": w.start,
+                        "end": w.end,
+                        "score": w.probability,
+                    }
+                )
+
+        structured_segments.append(
+            {
+                "start": seg.start,
+                "end": seg.end,
+                "text": text_stripped,
+                "words": words,
+            }
+        )
 
     return {
-        "full_text": full_text,
+        "full_text": " ".join(full_text_parts).strip(),
         "segments": structured_segments,
-        "language": language,
-        "confidence_score": 95
+        "language": info.language,
+        "confidence_score": int(info.language_probability * 100),
     }
 
 
@@ -225,8 +324,9 @@ def _configure_gemini() -> None:
 
     api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
-        raise Exception("GEMINI_API_KEY não configurada")
+        raise RuntimeError("GEMINI_API_KEY não configurada")
 
+    import google.generativeai as genai
     genai.configure(api_key=api_key)
     _gemini_configured = True
 
@@ -234,14 +334,15 @@ def _configure_gemini() -> None:
 def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
     _configure_gemini()
 
+    import google.generativeai as genai
+
     segments = transcript_data.get("segments") or []
     language = (transcript_data.get("language") or "").lower()
 
     max_segments = int(getattr(settings, "GEMINI_REFINE_MAX_SEGMENTS", 120) or 120)
-    segments_slice = segments[:max_segments]
 
     input_segments = []
-    for i, seg in enumerate(segments_slice):
+    for i, seg in enumerate(segments[:max_segments]):
         input_segments.append(
             {
                 "i": i,
@@ -272,37 +373,37 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
     }
 
     base_prompt_pt = """
-Você é um revisor de transcrições expert (Português).
+            Você é um revisor de transcrições expert (Português).
 
-Objetivo:
-- Primeiro inferir o CONTEXTO/DOMÍNIO da conversa (ex: negócios, saúde, estudos, espaço, medicina, produtividade, programação, marketing, finanças, fitness, etc.).
-- Em seguida, corrigir termos que o Whisper errou por causa de gírias, jargões, palavreado, metáforas ou nomes próprios.
+            Objetivo:
+            - Primeiro inferir o CONTEXTO/DOMÍNIO da conversa (ex: negócios, saúde, estudos, espaço, medicina, produtividade, programação, marketing, finanças, fitness, etc.).
+            - Em seguida, corrigir termos que o Whisper errou por causa de gírias, jargões, palavreado, metáforas ou nomes próprios.
 
-Regras críticas:
-1) NÃO altere timestamps. Eles já estão corretos. Você só pode reescrever o campo "text".
-2) Preserve o sentido original e o tom. Não censure palavrões; apenas corrija grafia/termos.
-3) Seja conservador: se não tiver certeza da correção, mantenha o original.
-4) Não invente conteúdo que não foi falado.
-5) Retorne SOMENTE JSON conforme o schema.
+            Regras críticas:
+            1) NÃO altere timestamps. Eles já estão corretos. Você só pode reescrever o campo "text".
+            2) Preserve o sentido original e o tom. Não censure palavrões; apenas corrija grafia/termos.
+            3) Seja conservador: se não tiver certeza da correção, mantenha o original.
+            4) Não invente conteúdo que não foi falado.
+            5) Retorne SOMENTE JSON conforme o schema.
 
-Entrada: lista de segmentos com índice i e seus textos.
-Saída: para cada i, retorne "text" revisado.
-"""
+            Entrada: lista de segmentos com índice i e seus textos.
+            Saída: para cada i, retorne "text" revisado.
+            """
 
     base_prompt_en = """
-You are an expert transcript editor.
+            You are an expert transcript editor.
 
-Goal:
-- First infer the conversation domain/context (business, health, studies, space, medicine, productivity, programming, etc.).
-- Then fix misrecognized words caused by slang, jargon, metaphors, or proper nouns.
+            Goal:
+            - First infer the conversation domain/context (business, health, studies, space, medicine, productivity, programming, etc.).
+            - Then fix misrecognized words caused by slang, jargon, metaphors, or proper nouns.
 
-Critical rules:
-1) Do NOT change timestamps. Only rewrite the "text" fields.
-2) Preserve meaning and tone. Do not censor.
-3) Be conservative: if unsure, keep the original.
-4) Do not invent content.
-5) Return ONLY JSON matching the schema.
-"""
+            Critical rules:
+            1) Do NOT change timestamps. Only rewrite the "text" fields.
+            2) Preserve meaning and tone. Do not censor.
+            3) Be conservative: if unsure, keep the original.
+            4) Do not invent content.
+            5) Return ONLY JSON matching the schema.
+            """
 
     prompt = base_prompt_pt if language.startswith("pt") else base_prompt_en
     payload = {
@@ -324,9 +425,8 @@ Critical rules:
     refined_segments = refined.get("segments") or []
     by_i = {int(s.get("i")): (s.get("text") or "") for s in refined_segments if s.get("i") is not None}
 
-    # Aplica apenas nos textos (mantendo start/end/words intocados)
     out_segments = list(segments)
-    for i in range(min(len(segments_slice), len(out_segments))):
+    for i in range(min(len(segments[:max_segments]), len(out_segments))):
         new_text = by_i.get(i)
         if isinstance(new_text, str) and new_text.strip():
             out_segments[i] = {
@@ -351,7 +451,7 @@ Critical rules:
 
 def _save_srt_file(transcript_data: dict, srt_path: str) -> None:
     segments = transcript_data.get("segments", [])
-    
+
     def format_time(seconds):
         millis = int((seconds % 1) * 1000)
         seconds = int(seconds)

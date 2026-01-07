@@ -51,16 +51,25 @@ export default function ProcessingPage() {
   const [isUploadComplete, setIsUploadComplete] = useState(false)
   const [isUploading, setIsUploading] = useState(true)
 
-  const { data: user } = useQuery({
+  const { data: user, isLoading: isUserLoading } = useQuery({
     queryKey: ["auth-session"],
     queryFn: getSession,
+    retry: 1,
   })
+
+  useEffect(() => {
+    if (storedTitle && storedTitle !== videoTitle) {
+      setVideoTitle(storedTitle)
+    }
+    if (storedThumb !== thumbnail) {
+      setThumbnail(storedThumb)
+    }
+  }, [storedTitle, storedThumb])
 
   useEffect(() => {
     const vid = searchParams.get("videoId")
     const configStr = searchParams.get("config")
 
-    // Hydrate once from persisted store (avoids render loops)
     if (!didInitFromStore) {
       if (processing?.jobId && !jobId) {
         setJobId(processing.jobId)
@@ -97,7 +106,15 @@ export default function ProcessingPage() {
   }, [searchParams, didInitFromStore, processing, jobId, config, progress, status, videoId, setProcessingConfig])
 
   useEffect(() => {
-    if (!videoId || !user) {
+    if (!videoId) {
+      return
+    }
+
+    if (isUserLoading) {
+      return
+    }
+
+    if (!user) {
       return
     }
 
@@ -122,7 +139,7 @@ export default function ProcessingPage() {
     }
 
     fetchDetails()
-  }, [videoId, user, videoFile, setVideoDetails])
+  }, [videoId, user, isUserLoading, videoFile, setVideoDetails])
 
   useEffect(() => {
     if (!videoId || !videoFile || isUploadComplete) {

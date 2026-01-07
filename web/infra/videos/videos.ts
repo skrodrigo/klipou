@@ -3,6 +3,9 @@ import type {
   Video,
   Clip,
   Job,
+  TranscriptSegment,
+  VideoTrimContextResponse,
+  UpdateClipTrimResponse,
   CreateVideoResponse,
   ListVideosResponse,
   ListVideoClipsResponse,
@@ -23,6 +26,9 @@ export type {
   Video,
   Clip,
   Job,
+  TranscriptSegment,
+  VideoTrimContextResponse,
+  UpdateClipTrimResponse,
   CreateVideoResponse,
   ListVideosResponse,
   ListVideoClipsResponse,
@@ -139,6 +145,25 @@ export async function duplicateClip(clipId: string, organizationId: string): Pro
   return request(`/api/clips/${clipId}/duplicate/`, {
     method: "POST",
     body: JSON.stringify({ organization_id: organizationId }),
+  })
+}
+
+export async function getVideoTrimContext(videoId: string, organizationId: string): Promise<VideoTrimContextResponse> {
+  return request<VideoTrimContextResponse>(`/api/videos/${videoId}/trim-context/?organization_id=${organizationId}`, {
+    method: "GET",
+    headers: {
+      "X-Organization-ID": organizationId,
+    },
+  })
+}
+
+export async function updateClipTrim(
+  clipId: string,
+  payload: { organization_id: string; start_time: number; end_time: number }
+): Promise<UpdateClipTrimResponse> {
+  return request<UpdateClipTrimResponse>(`/api/clips/${clipId}/trim/`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
   })
 }
 

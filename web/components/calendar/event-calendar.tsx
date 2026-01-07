@@ -14,16 +14,12 @@ import {
 } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarDndProvider } from "@/components/calendar-dnd-context";
 import {
   AgendaDaysToShow,
   EventGap,
   EventHeight,
   WeekCellsHeight,
 } from "@/hooks/constants";
-import { DayView } from "@/components/day-view";
-import { EventDialog } from "@/components/event-dialog";
-import { MonthView } from "@/components/month-view";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +35,10 @@ import type { CalendarEvent, CalendarView } from "./types";
 import { addHoursToDate } from "./utils";
 import { WeekView } from "./week-view";
 import { AgendaView } from "./agenda-view";
+import { CalendarDndProvider } from "./calendar-dnd-context";
+import { MonthView } from "./month-view";
+import { DayView } from "./day-view";
+import { EventDialog } from "./event-dialog";
 
 export interface EventCalendarProps {
   events?: CalendarEvent[];

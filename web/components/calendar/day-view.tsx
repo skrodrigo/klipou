@@ -23,9 +23,9 @@ import { cn } from "@/lib/utils";
 import type { CalendarEvent } from "./types";
 import { isMultiDayEvent } from "./utils";
 import { useCurrentTimeIndicator } from "@/hooks/use-current-time-indicator";
-import { EventItem } from "../event-item";
-import { DraggableEvent } from "../draggable-event";
-import { DroppableCell } from "../droppable-cell";
+import { EventItem } from "./event-item";
+import { DraggableEvent } from "./draggable-event";
+import { DroppableCell } from "./droppable-cell";
 
 interface DayViewProps {
   currentDate: Date;

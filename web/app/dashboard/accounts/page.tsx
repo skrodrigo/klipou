@@ -83,7 +83,7 @@ export default function AccountsPage() {
       </div>
 
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="flex flex-wrap gap-6">
         {PLATFORMS.map((platform) => {
           const connected = isConnected(platform.id)
           const account = getConnectedAccount(platform.id)
@@ -91,7 +91,7 @@ export default function AccountsPage() {
           return (
             <div
               key={platform.id}
-              className={`rounded-lg border p-6 flex flex-col h-full transition-all ${connected
+              className={`rounded-lg border w-60 h-60 p-4 flex flex-col h-full transition-all ${connected
                 ? "bg-card border-green-500/20 shadow-sm"
                 : "bg-card border-border hover:border-border/80"
                 }`}
@@ -111,16 +111,6 @@ export default function AccountsPage() {
 
               <h3 className="text-lg font-semibold text-foreground mb-1">{platform.name}</h3>
               <p className="text-muted-foreground text-sm mb-4">{platform.desc}</p>
-
-              {connected && account && (
-                <div className="mb-4 p-3 bg-muted rounded-md">
-                  <p className="text-xs text-muted-foreground mb-1">Conectado como:</p>
-                  <p className="text-sm font-medium text-foreground">{account.display_name || account.username}</p>
-                  {account.token_expired && (
-                    <p className="text-xs text-yellow-600 mt-2">⚠️ Token expirado - reconecte para continuar</p>
-                  )}
-                </div>
-              )}
 
               <div className="mt-auto space-y-2">
                 {!connected ? (

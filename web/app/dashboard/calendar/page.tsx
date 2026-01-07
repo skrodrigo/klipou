@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 
-import { EventCalendar } from "@/components/event-calendar"
-import type { CalendarEvent } from "@/components/types"
 import { sampleEvents } from "@/lib/events/sample-events"
+import type { CalendarEvent } from "@/components/calendar"
+import { EventCalendar } from "@/components/calendar/event-calendar"
 
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>(sampleEvents)

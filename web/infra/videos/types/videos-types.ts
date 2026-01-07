@@ -26,9 +26,33 @@ export type Clip = {
   confidence_score?: number
   storage_path?: string
   video_url?: string
+  full_video_url?: string | null
   thumbnail_url?: string
   transcript?: string
   created_at: string
+  updated_at: string
+}
+
+export type TranscriptSegment = {
+  start: number
+  end: number
+  text: string
+}
+
+export type VideoTrimContextResponse = {
+  video_id: string
+  video_url: string | null
+  transcript: {
+    language: string | null
+    segments: TranscriptSegment[]
+  }
+}
+
+export type UpdateClipTrimResponse = {
+  clip_id: string
+  start_time: number
+  end_time: number
+  duration: number
   updated_at: string
 }
 

@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import type { CalendarEvent } from "./types";
 import { AgendaDaysToShow } from "@/hooks/constants";
 import { getAgendaEventsForDay } from "./utils";
-import { EventItem } from "../event-item";
+import { EventItem } from "./event-item";
 
 
 interface AgendaViewProps {

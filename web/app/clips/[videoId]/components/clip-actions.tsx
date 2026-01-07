@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
@@ -15,8 +16,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Edit02Icon, Copy01Icon, Delete02Icon } from "@hugeicons/core-free-icons"
+import { Edit02Icon, Copy01Icon, Delete02Icon, ScissorIcon, VideoReplayIcon } from "@hugeicons/core-free-icons"
 import type { Clip } from "@/infra/videos/videos"
+import { TrimDialog } from "./trim-dialog"
+
 
 interface ClipActionsProps {
   clip: Clip
@@ -26,9 +29,18 @@ interface ClipActionsProps {
 }
 
 export function ClipActions({ clip, onRename, onDuplicate, onDelete }: ClipActionsProps) {
+  const router = useRouter()
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameTitle, setRenameTitle] = useState(clip.title)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [trimDialogOpen, setTrimDialogOpen] = useState(false)
+
+  const videoId = useMemo(() => {
+    if (typeof window === "undefined") return ""
+    const parts = window.location.pathname.split("/").filter(Boolean)
+    const clipsIdx = parts.indexOf("clips")
+    return clipsIdx >= 0 ? (parts[clipsIdx + 1] ?? "") : ""
+  }, [])
 
   const handleRename = () => {
     if (renameTitle) {
@@ -47,19 +59,37 @@ export function ClipActions({ clip, onRename, onDuplicate, onDelete }: ClipActio
       <div className="flex flex-row lg:flex-col gap-3 shrink-0 lg:pt-2 w-full lg:w-auto overflow-x-auto lg:overflow-visible">
         <ActionButton
           icon={<HugeiconsIcon icon={Edit02Icon} size={16} />}
-          label="Rename"
+          label="Renomear"
           variant="default"
           onClick={() => setRenameDialogOpen(true)}
         />
         <ActionButton
           icon={<HugeiconsIcon icon={Copy01Icon} size={16} />}
-          label="Duplicate"
+          label="Duplicar"
           variant="default"
           onClick={() => onDuplicate(clip.clip_id)}
         />
         <ActionButton
+          icon={<HugeiconsIcon icon={VideoReplayIcon} size={16} />}
+          label="Aparar"
+          variant="default"
+          onClick={() => setTrimDialogOpen(true)}
+        />
+        <ActionButton
+          icon={<HugeiconsIcon icon={ScissorIcon} size={16} />}
+          label="Editar"
+          variant="default"
+          onClick={() => {
+            try {
+              sessionStorage.setItem(`clip-edit:${videoId}`, clip.clip_id)
+            } catch {
+            }
+            router.push(`/clips/${videoId}/edit`)
+          }}
+        />
+        <ActionButton
           icon={<HugeiconsIcon icon={Delete02Icon} size={16} />}
-          label="Delete"
+          label="Deletar"
           variant="danger"
           onClick={() => setDeleteDialogOpen(true)}
         />
@@ -108,6 +138,13 @@ export function ClipActions({ clip, onRename, onDuplicate, onDelete }: ClipActio
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <TrimDialog
+        open={trimDialogOpen}
+        onOpenChange={setTrimDialogOpen}
+        clip={clip}
+        videoId={videoId}
+      />
     </>
   )
 }
