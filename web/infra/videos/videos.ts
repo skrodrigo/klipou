@@ -103,9 +103,15 @@ export async function listVideoClips(videoId: string): Promise<Clip[]> {
   return data.results ?? []
 }
 
-export async function getClipDetails(clipId: string): Promise<Clip> {
-  const data = await request<ClipDetailsResponse>(`/api/clips/${clipId}/`)
-  return data.clip
+export async function getClipDetails(clipId: string, organizationId: string): Promise<ClipDetailsResponse> {
+  const data = await request<ClipDetailsResponse>(`/api/clips/${clipId}/?organization_id=${organizationId}`, {
+    method: "GET",
+    headers: {
+      "X-Organization-ID": organizationId,
+    },
+  })
+
+  return data
 }
 
 export async function downloadClip(clipId: string, organizationId: string): Promise<DownloadClipResponse> {

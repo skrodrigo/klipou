@@ -20,8 +20,14 @@ import { Slider } from "@/components/ui/slider"
 function formatTimeLabel(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00"
   const totalSeconds = Math.floor(seconds)
-  const mins = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(totalSeconds / 3600)
+  const mins = Math.floor((totalSeconds % 3600) / 60)
   const secs = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}`
+  }
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
 }
 
@@ -126,8 +132,8 @@ export function TrimDialog({
 
   const organizationId = user?.organization_id || ""
 
-  const { data, error, refetch } = useQuery({
-    queryKey: ["video-trim-context", videoId, organizationId],
+  const { data, error, refetch, isLoading, isFetching } = useQuery({
+    queryKey: ["video-trim-context", videoId, organizationId, clip.clip_id],
     queryFn: () => getVideoTrimContext(videoId, organizationId),
     enabled: open && !!videoId && !!organizationId,
     retry: 1,
@@ -194,11 +200,11 @@ export function TrimDialog({
       const block = filteredBlocks[i]
       const overlap = getOverlapWindow(block.start, block.end)
       if (overlap.hasOverlap) {
-        return `transcript-block-${block.start}-${i}`
+        return `transcript-block-${clip.clip_id}-${block.start}-${i}`
       }
     }
     return null
-  }, [filteredBlocks, sliderValue[0], sliderValue[1]])
+  }, [clip.clip_id, filteredBlocks, sliderValue[0], sliderValue[1]])
 
   useEffect(() => {
     if (!open) return
@@ -227,11 +233,14 @@ export function TrimDialog({
       setShowTranscriptBottomFade(scrollTop + clientHeight < scrollHeight - 1)
     }
 
+    scrollElement.addEventListener("scroll", updateFade, { passive: true })
+    updateFade()
+
     const tryScroll = () => {
       if (cancelled) return
       scrollToSelectedAttemptRef.current += 1
 
-      const el = document.getElementById(firstSelectedBlockId)
+      const el = scrollElement.querySelector(`#${CSS.escape(firstSelectedBlockId)}`) as HTMLElement | null
       if (!el) {
         if (scrollToSelectedAttemptRef.current < 12) {
           t = window.setTimeout(tryScroll, 50)
@@ -258,6 +267,7 @@ export function TrimDialog({
     return () => {
       cancelled = true
       if (t) window.clearTimeout(t)
+      scrollElement.removeEventListener("scroll", updateFade)
     }
   }, [open, clip.clip_id, firstSelectedBlockId, filteredBlocks.length])
 
@@ -359,6 +369,8 @@ export function TrimDialog({
                     <div className="p-4 space-y-0">
                       {error ? (
                         <div className="text-sm text-red-400">Erro ao carregar transcrição.</div>
+                      ) : isLoading || isFetching ? (
+                        <div className="text-sm text-white/40 text-center py-8">Carregando transcrição...</div>
                       ) : filteredBlocks.length === 0 ? (
                         <div className="text-sm text-white/40 text-center py-8">Nenhum trecho encontrado.</div>
                       ) : (
@@ -380,7 +392,7 @@ export function TrimDialog({
 
                           return (
                             <button
-                              id={`transcript-block-${block.start}-${idx}`}
+                              id={`transcript-block-${clip.clip_id}-${block.start}-${idx}`}
                               key={`${block.start}-${idx}`}
                               onClick={() => handleSeek(block.start)}
                               className={cn(

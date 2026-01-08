@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from celery import shared_task
 from django.conf import settings
 import google.generativeai as genai
@@ -72,7 +73,14 @@ def analyze_semantic_task(self, video_id: str) -> dict:
             video.retry_count += 1
             video.save()
 
-            if self.request.retries < self.max_retries:
+            msg = str(e)
+            non_retryable = (
+                "Could not extract valid JSON" in msg
+                or "Empty response text" in msg
+                or "Response text is not a string" in msg
+            )
+
+            if not non_retryable and self.request.retries < self.max_retries:
                 raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
         return {"error": str(e), "status": "failed"}
@@ -188,6 +196,10 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
         prompt = f"""{base_instructions}
         Idioma do Vídeo: Português.
 
+        SAÍDA:
+        - Retorne APENAS JSON válido (sem markdown, sem ```json, sem comentários, sem texto extra).
+        - Não inclua caracteres antes do '{{' nem depois do '}}'.
+
         Retorne um JSON com:
         1. title: Título viral para o vídeo original.
         2. description: Descrição SEO.
@@ -232,17 +244,185 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
             generation_config=genai.types.GenerationConfig(
                 response_mime_type="application/json",
                 response_schema=response_schema,
-                temperature=0.4
+                temperature=0.4,
+                max_output_tokens=8192,
             )
         )
-        
-        analysis_data = json.loads(response.text)
+
+        raw_text = _get_gemini_response_text(response)
+        logger.info(
+            "Gemini response received: chars=%s",
+            len(raw_text) if isinstance(raw_text, str) else "<non-str>",
+        )
+
+        try:
+            analysis_data = _safe_load_json_response(raw_text)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Gemini response not valid JSON. preview=%r",
+                (raw_text[:500] if isinstance(raw_text, str) else str(raw_text)[:500]),
+            )
+            try:
+                analysis_data = _repair_gemini_json(model, raw_text, response_schema)
+            except json.JSONDecodeError:
+                logger.error(
+                    "Gemini JSON repair failed. preview=%r",
+                    (raw_text[:500] if isinstance(raw_text, str) else str(raw_text)[:500]),
+                )
+                raise
+
         logger.info(f"Análise Gemini concluída: {len(analysis_data.get('candidates', []))} clips identificados")
         return analysis_data
 
     except Exception as e:
         logger.error(f"Erro na chamada Gemini: {e}")
         raise Exception(f"Falha na IA Generativa: {e}")
+
+
+def _safe_load_json_response(text: str) -> dict:
+    if not isinstance(text, str):
+        raise json.JSONDecodeError("Response text is not a string", str(text), 0)
+
+    raw = text.strip()
+    if not raw:
+        raise json.JSONDecodeError("Empty response text", raw, 0)
+
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise json.JSONDecodeError("JSON root is not an object", raw[:5000], 0)
+        return parsed
+    except json.JSONDecodeError:
+        pass
+
+    fenced = _extract_json_from_fences(raw)
+    if fenced is not None:
+        try:
+            parsed = json.loads(fenced)
+            if not isinstance(parsed, dict):
+                raise json.JSONDecodeError("JSON root is not an object", fenced[:5000], 0)
+            return parsed
+        except json.JSONDecodeError:
+            pass
+
+    extracted = _extract_first_json_value(raw)
+    if extracted is not None:
+        parsed = json.loads(extracted)
+        if not isinstance(parsed, dict):
+            raise json.JSONDecodeError("JSON root is not an object", extracted[:5000], 0)
+        return parsed
+
+    preview = raw[:5000]
+    raise json.JSONDecodeError("Could not extract valid JSON from response", preview, 0)
+
+
+def _get_gemini_response_text(response) -> str:
+    """Best-effort to extract text from google.generativeai response object."""
+    t = getattr(response, "text", None)
+    if isinstance(t, str) and t.strip():
+        return t
+
+    # Fallback: candidates[*].content.parts[*].text
+    candidates = getattr(response, "candidates", None) or []
+    parts: list[str] = []
+    for c in candidates:
+        content = getattr(c, "content", None)
+        if not content:
+            continue
+        for p in getattr(content, "parts", None) or []:
+            pt = getattr(p, "text", None)
+            if isinstance(pt, str) and pt.strip():
+                parts.append(pt)
+
+    return "\n".join(parts).strip()
+
+
+def _repair_gemini_json(model, raw_text: str, response_schema: dict) -> dict:
+    """Second-pass: ask Gemini to output valid JSON only.
+
+    This mitigates cases where the first response includes extra text, is wrapped,
+    or has minor JSON formatting issues.
+    """
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        raise json.JSONDecodeError("Empty response text", str(raw_text), 0)
+
+    repair_prompt = (
+        "Converta o conteúdo abaixo em JSON VÁLIDO que siga exatamente o schema. "
+        "Retorne APENAS o JSON (sem markdown, sem texto extra).\n\n"
+        "CONTEÚDO:\n"
+        f"{raw_text}"
+    )
+
+    repair_response = model.generate_content(
+        repair_prompt,
+        generation_config=genai.types.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            temperature=0.0,
+            max_output_tokens=4096,
+        ),
+    )
+
+    repaired_text = _get_gemini_response_text(repair_response)
+    return _safe_load_json_response(repaired_text)
+
+
+def _extract_json_from_fences(text: str) -> str | None:
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if not m:
+        return None
+    fenced = m.group(1).strip()
+    extracted = _extract_first_json_value(fenced)
+    return extracted.strip() if extracted is not None else fenced
+
+
+def _extract_first_json_value(text: str) -> str | None:
+    obj_start = text.find("{")
+    arr_start = text.find("[")
+
+    if obj_start == -1 and arr_start == -1:
+        return None
+
+    if obj_start == -1:
+        start = arr_start
+        open_ch = "["
+        close_ch = "]"
+    elif arr_start == -1:
+        start = obj_start
+        open_ch = "{"
+        close_ch = "}"
+    else:
+        start = obj_start if obj_start < arr_start else arr_start
+        open_ch = "{" if start == obj_start else "["
+        close_ch = "}" if open_ch == "{" else "]"
+
+    in_string = False
+    escape = False
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1].strip()
+
+    return None
 
 
 def _get_duration_bounds(video_id: str) -> tuple[int, int]:

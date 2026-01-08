@@ -27,6 +27,7 @@ export type Clip = {
   storage_path?: string
   video_url?: string
   full_video_url?: string | null
+  preview_url?: string
   thumbnail_url?: string
   transcript?: string
   created_at: string
@@ -97,9 +98,7 @@ export type VideoStatusResponse = {
   message: string
 }
 
-export type ClipDetailsResponse = {
-  clip: Clip
-}
+export type ClipDetailsResponse = ClipDetails
 
 export type DownloadClipResponse = {
   clip_id: string
@@ -111,6 +110,20 @@ export type DownloadClipResponse = {
 export type DeleteClipResponse = {
   clip_id: string
   status: string
+}
+
+export type ClipDetails = {
+  clip_id: string
+  title: string
+  video_id: string
+  start_time: number
+  end_time: number
+  duration: number | null
+  engagement_score: number | null
+  ratio: string | null
+  created_at: string
+  preview_url: string
+  storage_path: string | null
 }
 
 export type SubmitClipFeedbackPayload = {

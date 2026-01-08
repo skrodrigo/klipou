@@ -5,18 +5,12 @@ import { useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { Spinner } from "@/components/ui/spinner"
+import { ingestVideoFromUrl } from "@/infra/videos/upload"
 import { useVideoStore } from "@/lib/store/video-store"
 import { cn } from "@/lib/utils"
-import { ingestVideoFromUrl } from "@/infra/videos/upload"
-import { Attachment01Icon, Cancel01FreeIcons, FacebookIcon, InstagramIcon, Linkedin01Icon, NewTwitterIcon, PinterestIcon, RedditIcon, TiktokIcon, TwitchIcon, VimeoIcon, YoutubeIcon } from "@hugeicons/core-free-icons"
+import { AttachmentIcon, Cancel01FreeIcons, FacebookIcon, InstagramIcon, Linkedin01Icon, NewTwitterIcon, PinterestIcon, RedditIcon, TiktokIcon, TwitchIcon, VimeoIcon, YoutubeIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Spinner } from "@/components/ui/spinner"
 
 const SUPPORTED_PLATFORMS = [
   { name: "YouTube", iconName: YoutubeIcon },
@@ -155,7 +149,7 @@ export default function DashboardPage() {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <div className="flex gap-3 items-center">
+            <div className="flex gap-3 items-center border border-border rounded-md">
               <input
                 hidden
                 onChange={handleFileChange}
@@ -168,7 +162,7 @@ export default function DashboardPage() {
                 onClick={() => fileInputRef.current?.click()}
                 className="text-muted-foreground p-3 border-border hover:text-foreground transition-colors"
               >
-                <HugeiconsIcon icon={Attachment01Icon} size={16} />
+                <HugeiconsIcon icon={AttachmentIcon} size={16} />
               </button>
               <Input
                 placeholder="Paste link or drag your video here"

@@ -38,6 +38,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   const [allowStitch, setAllowStitch] = useState(true)
   const [scheduleAt, setScheduleAt] = useState("")
   const [isDialogOpen, setDialogOpen] = useState(false)
+  const [shareClipId, setShareClipId] = useState<string | null>(null)
   const videoId = videoIdStr
   const [value, setValue] = useState<"public" | "private">("private")
   const [showTopFade, setShowTopFade] = useState(false)
@@ -265,6 +266,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                   <ClipCard
                     key={clip.clip_id}
                     clip={clip}
+                    videoId={videoId}
                     idx={idx}
                     selectedClips={selectedClips}
                     onToggleSelection={toggleClipSelection}
@@ -275,8 +277,16 @@ export default function ClipsPage({ params }: ClipsPageProps) {
                     onDelete={deleteClipFile}
                     shareValue={value}
                     onShareValueChange={setValue}
-                    isShareDialogOpen={isDialogOpen}
-                    onShareDialogOpenChange={setDialogOpen}
+                    isShareDialogOpen={shareClipId === clip.clip_id && isDialogOpen}
+                    shareClipId={shareClipId}
+                    onOpenShareDialog={(clipId: string) => {
+                      setShareClipId(clipId)
+                      setDialogOpen(true)
+                    }}
+                    onShareDialogOpenChange={(open) => {
+                      setDialogOpen(open)
+                      if (!open) setShareClipId(null)
+                    }}
                   />
                 ))
               )}

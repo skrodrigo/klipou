@@ -23,24 +23,18 @@ import { TrimDialog } from "./trim-dialog"
 
 interface ClipActionsProps {
   clip: Clip
+  videoId: string
   onRename: (clipId: string, title: string) => void
   onDuplicate: (clipId: string) => void
   onDelete: (clipId: string) => void
 }
 
-export function ClipActions({ clip, onRename, onDuplicate, onDelete }: ClipActionsProps) {
+export function ClipActions({ clip, videoId, onRename, onDuplicate, onDelete }: ClipActionsProps) {
   const router = useRouter()
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameTitle, setRenameTitle] = useState(clip.title)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [trimDialogOpen, setTrimDialogOpen] = useState(false)
-
-  const videoId = useMemo(() => {
-    if (typeof window === "undefined") return ""
-    const parts = window.location.pathname.split("/").filter(Boolean)
-    const clipsIdx = parts.indexOf("clips")
-    return clipsIdx >= 0 ? (parts[clipsIdx + 1] ?? "") : ""
-  }, [])
 
   const handleRename = () => {
     if (renameTitle) {
@@ -96,55 +90,62 @@ export function ClipActions({ clip, onRename, onDuplicate, onDelete }: ClipActio
       </div>
 
       {/* Rename Dialog */}
-      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Renomear Clip</DialogTitle>
-            <DialogDescription>Digite o novo título para o clip</DialogDescription>
-          </DialogHeader>
-          <Input
-            value={renameTitle}
-            onChange={(e) => setRenameTitle(e.target.value)}
-            placeholder="Novo título"
-          />
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleRename}>
-              Renomear
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {renameDialogOpen ? (
+        <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Renomear Clip</DialogTitle>
+              <DialogDescription>Digite o novo título para o clip</DialogDescription>
+            </DialogHeader>
+            <Input
+              value={renameTitle}
+              onChange={(e) => setRenameTitle(e.target.value)}
+              placeholder="Novo título"
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleRename}>
+                Renomear
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {/* Delete Dialog */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Deletar Clip</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja deletar este clip? Esta ação não pode ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Deletar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {deleteDialogOpen ? (
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Deletar Clip</AlertDialogTitle>
+              <AlertDialogDescription>
+                Tem certeza que deseja deletar este clip? Esta ação não pode ser desfeita.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Deletar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
 
-      <TrimDialog
-        open={trimDialogOpen}
-        onOpenChange={setTrimDialogOpen}
-        clip={clip}
-        videoId={videoId}
-      />
+      {trimDialogOpen ? (
+        <TrimDialog
+          key={`trim-${clip.clip_id}`}
+          open={trimDialogOpen}
+          onOpenChange={setTrimDialogOpen}
+          clip={clip}
+          videoId={videoId}
+        />
+      ) : null}
     </>
   )
 }

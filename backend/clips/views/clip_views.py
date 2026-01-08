@@ -203,6 +203,9 @@ def get_clip_details(request, clip_id):
             {
                 "clip_id": str(clip.clip_id),
                 "title": clip.title,
+                "video_id": str(clip.video.video_id),
+                "start_time": float(clip.start_time),
+                "end_time": float(clip.end_time),
                 "duration": clip.duration,
                 "engagement_score": clip.engagement_score,
                 "ratio": clip.ratio,

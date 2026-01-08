@@ -17,6 +17,7 @@ import type { Clip } from "@/infra/videos/videos"
 
 interface ClipCardProps {
   clip: Clip
+  videoId: string
   idx: number
   selectedClips: string[]
   onToggleSelection: (clipId: string) => void
@@ -28,11 +29,14 @@ interface ClipCardProps {
   shareValue: "public" | "private"
   onShareValueChange: (value: "public" | "private") => void
   isShareDialogOpen: boolean
+  shareClipId: string | null
+  onOpenShareDialog: (clipId: string) => void
   onShareDialogOpenChange: (open: boolean) => void
 }
 
 export function ClipCard({
   clip,
+  videoId,
   idx,
   selectedClips,
   onToggleSelection,
@@ -44,6 +48,8 @@ export function ClipCard({
   shareValue,
   onShareValueChange,
   isShareDialogOpen,
+  shareClipId,
+  onOpenShareDialog,
   onShareDialogOpenChange,
 }: ClipCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -309,59 +315,68 @@ export function ClipCard({
             variant="secondary"
             size="icon"
             className="h-9 w-9 rounded-lg bg-card text-foreground hover:text-white hover:bg-zinc-700"
-            onClick={() => onShareDialogOpenChange(true)}
+            onClick={() => onOpenShareDialog(clip.clip_id)}
           >
             <HugeiconsIcon icon={Share03Icon} size={16} />
           </Button>
-          <Dialog open={isShareDialogOpen} onOpenChange={onShareDialogOpenChange}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Compartilhe esse Projeto</DialogTitle>
-                <DialogDescription>
-                  Anyone with the link can view
-                </DialogDescription>
-              </DialogHeader>
-              <div className="mt-4 w-full flex gap-2 justify-between items-center">
-                <Select value={shareValue} onValueChange={(v) => onShareValueChange(v as "public" | "private")}>
-                  <SelectTrigger className="flex items-center gap-2 w-full">
-                    {shareValue === "public" ? (
-                      <div className="flex items-center justify-start gap-2">
-                        <HugeiconsIcon icon={GlobeIcon} size={16} />
-                        <span>Qualquer pessoa pode ver</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-start gap-2">
-                        <HugeiconsIcon icon={LockIcon} size={16} />
-                        <span>Somente você</span>
-                      </div>
-                    )}
-                  </SelectTrigger>
+          {isShareDialogOpen && shareClipId === clip.clip_id ? (
+            <Dialog open={isShareDialogOpen} onOpenChange={onShareDialogOpenChange}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Compartilhe esse Projeto</DialogTitle>
+                  <DialogDescription>
+                    Anyone with the link can view
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-4 w-full flex gap-2 justify-between items-center">
+                  <Select value={shareValue} onValueChange={(v) => onShareValueChange(v as "public" | "private")}>
+                    <SelectTrigger className="flex items-center gap-2 w-full">
+                      {shareValue === "public" ? (
+                        <div className="flex items-center justify-start gap-2">
+                          <HugeiconsIcon icon={GlobeIcon} size={16} />
+                          <span>Qualquer pessoa pode ver</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-start gap-2">
+                          <HugeiconsIcon icon={LockIcon} size={16} />
+                          <span>Somente você</span>
+                        </div>
+                      )}
+                    </SelectTrigger>
 
-                  <SelectContent>
-                    <SelectItem value="public">Qualquer pessoa pode ver</SelectItem>
-                    <SelectItem value="private">Somente você</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="secondary" className="ml-2 bg-foreground hover:bg-foreground/90 text-background">Copy Link</Button>
-              </div>
-              <div className="mt-4 flex items-center">
-                <Input type="email" placeholder="Enter email" className="flex-1" />
-                <Button variant="default" className="ml-2">Invite</Button>
-              </div>
-              <Separator />
-              <div className="mt-4 pt-4 flex items-center justify-between">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
-                  <AvatarFallback>SK</AvatarFallback>
-                </Avatar>
-                <div className="ml-3 flex-1">
-                  <p className="text-sm font-medium">Rodrigo Carvalho</p>
-                  <p className="text-xs text-muted-foreground">rodrigoa0987@gmail.com</p>
+                    <SelectContent>
+                      <SelectItem value="public">Qualquer pessoa pode ver</SelectItem>
+                      <SelectItem value="private">Somente você</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    className="ml-2 bg-foreground hover:bg-foreground/90 text-background"
+                  >
+                    Copy Link
+                  </Button>
                 </div>
-                <span className="text-xs text-muted-foreground">Owner</span>
-              </div>
-            </DialogContent>
-          </Dialog>
+                <div className="mt-4 flex items-center">
+                  <Input type="email" placeholder="Enter email" className="flex-1" />
+                  <Button variant="default" className="ml-2">
+                    Invite
+                  </Button>
+                </div>
+                <Separator />
+                <div className="mt-4 pt-4 flex items-center justify-between">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
+                    <AvatarFallback>SK</AvatarFallback>
+                  </Avatar>
+                  <div className="ml-3 flex-1">
+                    <p className="text-sm font-medium">Rodrigo Carvalho</p>
+                    <p className="text-xs text-muted-foreground">rodrigoa0987@gmail.com</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground">Owner</span>
+                </div>
+              </DialogContent>
+            </Dialog>
+          ) : null}
         </div>
 
         {/* Transcript Text */}
@@ -385,6 +400,7 @@ export function ClipCard({
       {/* Right Column: Floating Actions */}
       <ClipActions
         clip={clip}
+        videoId={videoId}
         onRename={onRename}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
