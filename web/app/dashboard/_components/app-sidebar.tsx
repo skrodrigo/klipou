@@ -121,7 +121,14 @@ export function AppSidebar() {
     <>
       <Sidebar>
         <SidebarHeader className="space-y-4">
-          <Image src='/logos/klipai.svg' alt="logo" width={100} height={100} className="mb-4 w-24 ml-2 pt-4" priority quality={100} />
+          <Image
+            src='/logos/klipai.svg'
+            alt="logo"
+            width={32}
+            height={32}
+            className="ml-1 mt-3 rounded-md"
+            priority
+            quality={100} />
           <TeamSwitcher />
           <div className="relative w-full">
             <HugeiconsIcon size={16} icon={Search01Icon} className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

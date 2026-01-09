@@ -35,20 +35,33 @@ import { getClipDetails, getVideoTrimContext } from "@/infra/videos/videos"
 function formatTimeLabel(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00"
   const totalSeconds = Math.floor(seconds)
-  const mins = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(totalSeconds / 3600)
+  const mins = Math.floor((totalSeconds % 3600) / 60)
   const secs = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}`
+  }
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
 }
 
 function formatTimeRangeLabel(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00.00"
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  const wholeSecs = Math.floor(secs)
-  const centis = Math.floor((secs - wholeSecs) * 100)
-  return `${mins.toString().padStart(2, "0")}:${wholeSecs
+  const totalCentis = Math.floor(seconds * 100)
+  const totalSeconds = Math.floor(totalCentis / 100)
+  const centis = totalCentis % 100
+  const hours = Math.floor(totalSeconds / 3600)
+  const mins = Math.floor((totalSeconds % 3600) / 60)
+  const secs = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}.${centis.toString().padStart(2, "0")}`
+  }
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}.${centis
     .toString()
-    .padStart(2, "0")}.${centis.toString().padStart(2, "0")}`
+    .padStart(2, "0")}`
 }
 
 export default function ClipEditPage() {
@@ -74,10 +87,14 @@ export default function ClipEditPage() {
   const [cropRect, setCropRect] = useState({ x: 0, y: 0, w: 100, h: 100 })
   const [videoPan, setVideoPan] = useState({ x: 0, y: 0 })
   const [rotation, setRotation] = useState(0)
+  const [isSeeking, setIsSeeking] = useState(false)
+
+  const timelineDragRef = useRef<{ active: boolean; startX: number; startTime: number } | null>(null)
 
   const panRef = useRef<{ active: boolean; startX: number; startY: number; panX: number; panY: number } | null>(null)
   const rotateRef = useRef<{ active: boolean; startAngle: number; startRotation: number; cx: number; cy: number } | null>(null)
   const cropOverlayRef = useRef<HTMLDivElement>(null)
+  const timelineContainerRef = useRef<HTMLDivElement>(null)
 
   const dragRef = useRef<{
     active: boolean
@@ -195,6 +212,40 @@ export default function ClipEditPage() {
       if (raf) window.cancelAnimationFrame(raf)
     }
   }, [fullVideoUrl, clipStart, clipEnd])
+
+  const handleSeek = (time: number) => {
+    const el = previewVideoRef.current
+    if (!el) return
+    const newTime = Math.max(clipStart, Math.min(clipEnd, time))
+    el.currentTime = newTime
+    setRelativeTime(newTime - clipStart)
+  }
+
+  const handleTimelinePointerDown = (e: import("react").PointerEvent) => {
+    const container = timelineContainerRef.current
+    if (!container) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const rect = container.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const pct = clickX / rect.width
+    const newTime = clipStart + pct * clipDuration
+
+    handleSeek(newTime)
+    setIsSeeking(true)
+
+    timelineDragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startTime: newTime,
+    }
+
+    try {
+      ; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch { }
+  }
 
   useEffect(() => {
     const el = previewVideoRef.current
@@ -871,27 +922,28 @@ export default function ClipEditPage() {
         <div className={showTimeline ? "shrink-0 max-h-[200px] min-h-[200px]" : "hidden"}>
 
           <div className="h-full px-4 py-4">
-            <div className="relative h-full bg-background/20 overflow-hidden">
+            <div ref={timelineContainerRef} className="relative h-full bg-background/20 overflow-hidden" onPointerDown={handleTimelinePointerDown}>
               {showTimelineLeftFade ? (
-                <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-r from-background/60 to-transparent" />
+                <div className="pointer-events-none absolute z-10 left-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-r from-background/60 to-transparent" />
               ) : null}
               {showTimelineRightFade ? (
-                <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-l from-background/60 to-transparent" />
+                <div className="pointer-events-none absolute z-10 right-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-l from-background/60 to-transparent" />
               ) : null}
 
               <div
-                className="absolute top-0 bottom-0 z-20"
+                className="absolute top-0 bottom-0 z-20 cursor-pointer"
                 style={{
                   left:
                     clipDuration > 0
                       ? `${Math.min(Math.max(relativeTime / clipDuration, 0), 1) * 100}%`
                       : "0%",
                 }}
+                onPointerDown={handleTimelinePointerDown}
               >
                 <img
                   src="/trim-cursor-editor.svg"
                   alt="Playhead"
-                  className="h-full w-auto -translate-x-1/2 pointer-events-none select-none pl-[16px]"
+                  className="h-full w-auto z-50 -translate-x-1/2 pointer-events-none select-none pl-[16px]"
                 />
               </div>
 
@@ -912,7 +964,16 @@ export default function ClipEditPage() {
                     </div>
                   </div>
 
-                  <div className="px-2 py-2">
+                  <div className="px-2 py-2 space-y-2">
+                    <div className="h-8 relative">
+                      <div
+                        className="h-8 rounded-md bg-[#7DD3FC] border border-border flex items-center px-2 text-xs"
+                        style={{ width: "100%" }}
+                      >
+                        <span className="text-[#083344] font-medium">Video</span>
+                      </div>
+                    </div>
+
                     <div className="flex flex-row gap-1">
                       {(segments.length === 0 ? ["Add Text", "Add Text", "Subtitle"] : segments.slice(0, 40)).map((item, idx) => {
                         const label = typeof item === "string" ? item : (item.text || "")
@@ -927,19 +988,19 @@ export default function ClipEditPage() {
                         return (
                           <div
                             key={`${label}-${idx}`}
-                            className="h-8 w-10 rounded-md bg-accent/50 border border-border flex items-center px-2 text-xs shrink-0"
+                            className="h-8 max-w-fit rounded-md bg-[#FFE46E] border border-border flex items-center px-2 text-xs shrink-0"
                             style={{ width: widthPct }}
                           >
                             {start === null ? (
-                              <span className={label === "Subtitle" ? "text-primary font-medium" : "text-muted-foreground"}>
+                              <span className={label === "Subtitle" ? "text-[#504720] font-medium" : "text-[#504720]"}>
                                 {label}
                               </span>
                             ) : (
                               <div className="flex items-center w-full gap-2 min-w-0">
-                                <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+                                <span className="text-[10px] tabular-nums text-[#504720] shrink-0">
                                   {formatTimeLabel(start)}
                                 </span>
-                                <span className="text-xs text-foreground/90 truncate">{label}</span>
+                                <span className="text-xs text-[#504720] truncate">{label}</span>
                               </div>
                             )}
                           </div>

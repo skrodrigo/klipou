@@ -1,7 +1,7 @@
 "use client"
 
-import { useRouter } from "next/navigation"
-import { useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,13 +26,27 @@ const SUPPORTED_PLATFORMS = [
 ]
 
 export default function DashboardPage() {
+  const searchParams = useSearchParams()
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [sourceUrl, setSourceUrl] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { setVideoFile, setVideoFromUrl } = useVideoStore()
+  const { setVideoFile, setVideoFromUrl, videoFile } = useVideoStore()
   const router = useRouter()
+
+  useEffect(() => {
+    const urlFromQuery = searchParams.get("sourceUrl")
+    if (urlFromQuery) {
+      setSourceUrl(urlFromQuery)
+    }
+  }, [searchParams])
+
+  useEffect(() => {
+    if (videoFile) {
+      setFiles([videoFile])
+    }
+  }, [videoFile])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? [])

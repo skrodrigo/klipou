@@ -72,6 +72,34 @@ export function PublishSheet({
                   <div className="text-xs text-muted-foreground truncate">@skrodrigo</div>
                 </div>
               </div>
+              <div className="flex items-center gap-3">
+                <Checkbox />
+                <div className="relative">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
+                    <AvatarFallback>SK</AvatarFallback>
+                  </Avatar>
+                  <img src="/social/shorts.svg" alt="Shorts" className="absolute bottom-0 right-0 h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">Rodrigo Carvalho</div>
+                  <div className="text-xs text-muted-foreground truncate">@srkdg</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Checkbox />
+                <div className="relative">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="https://avatars.githubusercontent.com/u/142619236?v=4" alt="account" />
+                    <AvatarFallback>SK</AvatarFallback>
+                  </Avatar>
+                  <img src="/social/instagram.svg" alt="Instagram" className="absolute bottom-0 right-0 h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">Rodrigo Carvalho</div>
+                  <div className="text-xs text-muted-foreground truncate">@srkdg</div>
+                </div>
+              </div>
 
               <Button variant="secondary" className="w-full justify-center" size="sm">
                 Manage Accounts

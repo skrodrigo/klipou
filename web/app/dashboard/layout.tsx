@@ -9,7 +9,7 @@ export default function DashboardLayout({
   return (
     <SidebarProvider >
       <AppSidebar />
-      <main className="flex-1">
+      <main className="flex-1 font-dm-sans">
         <SidebarTrigger className="absolute z-50" />
         {children}
       </main>
