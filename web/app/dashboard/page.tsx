@@ -164,7 +164,7 @@ function DashboardPageInner() {
 
           <div
             className={cn(
-              "relative rounded-md transition-all flex-1  bg-card",
+              "relative rounded-md transition-all flex-1 bg-input",
               isDragging ? "" : "border-border"
             )}
             onDragOver={handleDragOver}
