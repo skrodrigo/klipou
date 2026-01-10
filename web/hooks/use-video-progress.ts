@@ -11,7 +11,7 @@ type UseVideoProgressError = {
   message: string
 }
 
-export function useVideoProgress(videoId: number | null) {
+export function useVideoProgress(videoId: string | null) {
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState<"idle" | "processing" | "completed">("idle")
   const [error, setError] = useState<UseVideoProgressError | null>(null)

@@ -115,7 +115,7 @@ export async function getClipDetails(clipId: string, organizationId: string): Pr
 }
 
 export async function downloadClip(clipId: string, organizationId: string): Promise<DownloadClipResponse> {
-  return request<DownloadClipResponse>(`/api/clips/${clipId}/download/`, {
+  return request<DownloadClipResponse>(`/api/clips/${clipId}/download/?organization_id=${organizationId}`, {
     method: "GET",
     headers: {
       "X-Organization-ID": organizationId,

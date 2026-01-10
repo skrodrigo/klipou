@@ -11,7 +11,7 @@ import { AlertSquareIcon, CancelSquareIcon, Loading03Icon, LogoutSquare02Icon, S
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useQuery } from "@tanstack/react-query"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { toast } from "sonner"
 
 type ProcessingStatus = "ingestion" | "queued" | "downloading" | "normalizing" | "transcribing" | "analyzing" | "embedding" | "selecting" | "reframing" | "rendering" | "clipping" | "captioning" | "done" | "failed"
@@ -24,6 +24,14 @@ interface StatusMessage {
 }
 
 export default function ProcessingPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProcessingPageInner />
+    </Suspense>
+  )
+}
+
+function ProcessingPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [progress, setProgress] = useState(0)

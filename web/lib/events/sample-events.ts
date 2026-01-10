@@ -1,6 +1,6 @@
 import { addDays, setHours, setMinutes, subDays } from "date-fns"
 
-import type { CalendarEvent } from "@/components/types"
+import type { CalendarEvent } from "@/components/calendar/types"
 
 export const sampleEvents: CalendarEvent[] = [
   {

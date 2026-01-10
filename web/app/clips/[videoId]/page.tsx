@@ -50,6 +50,8 @@ export default function ClipsPage({ params }: ClipsPageProps) {
     queryFn: getSession,
   })
 
+  const organizationId = user?.organization?.organization_id ?? user?.organization_id ?? ""
+
   const { data: clips = [], isLoading: loading } = useQuery({
     queryKey: ["video-clips", videoId],
     queryFn: () => listVideoClips(videoId),
@@ -64,7 +66,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   })
 
   const { mutate: downloadClipFile } = useMutation({
-    mutationFn: (clipId: string) => downloadClip(clipId, user?.organization_id || ""),
+    mutationFn: (clipId: string) => downloadClip(clipId, organizationId),
     onSuccess: (data) => {
       window.open(data.download_url, "_blank")
       toast.success("Download iniciado!")
@@ -85,7 +87,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   })
 
   const { mutate: deleteClipFile } = useMutation({
-    mutationFn: (clipId: string) => deleteClip(clipId, user?.organization_id || ""),
+    mutationFn: (clipId: string) => deleteClip(clipId, organizationId),
     onSuccess: (_data, clipId) => {
       toast.success("Clip deletado!")
 
@@ -110,7 +112,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
 
   const { mutate: renameClipFile } = useMutation({
     mutationFn: ({ clipId, title }: { clipId: string; title: string }) =>
-      renameClip(clipId, title, user?.organization_id || ""),
+      renameClip(clipId, title, organizationId),
     onSuccess: () => {
       toast.success("Clip renomeado!")
     },
@@ -120,7 +122,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
   })
 
   const { mutate: duplicateClipFile } = useMutation({
-    mutationFn: (clipId: string) => duplicateClip(clipId, user?.organization_id || ""),
+    mutationFn: (clipId: string) => duplicateClip(clipId, organizationId),
     onSuccess: () => {
       toast.success("Clip duplicado!")
     },

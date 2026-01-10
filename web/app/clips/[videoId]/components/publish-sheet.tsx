@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { SchedulePicker } from "@/components/ui/schedule-picker"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -50,7 +51,7 @@ export function PublishSheet({
         className="sm:min-w-3xl w-full gap-0 p-0"
         showCloseButton={false}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-[240px_1fr] min-h-full">
+        <div className="flex h-full">
           <div className="border-b sm:border-b-0 border-border p-4">
             <SheetHeader className="p-0">
               <SheetTitle>Publicar no social</SheetTitle>
@@ -106,8 +107,7 @@ export function PublishSheet({
               </Button>
             </div>
           </div>
-
-          <div className="p-4 space-y-6 bg-card my-6 rounded-l-lg">
+          <div className="p-4 flex-1 space-y-6 bg-background border border-r-0 my-6 rounded-l-lg">
             <div className="space-y-2">
               <div className="text-sm font-medium">Descrição</div>
               <Textarea
@@ -159,21 +159,18 @@ export function PublishSheet({
             </div>
           </div>
         </div>
-
-        <SheetFooter className="border-t border-border">
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between w-full">
-            <Button variant="secondary" onClick={() => onOpenChange(false)} className="order-last sm:order-first">
-              Cancelar
+        <div className="flex p-4 items-center justify-between w-full">
+          <Button variant="secondary" onClick={() => onOpenChange(false)} className="order-last sm:order-first">
+            Cancelar
+          </Button>
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <SchedulePicker value={scheduleAt} onChange={onScheduleAtChange} />
+            <Button variant="secondary">Agendar</Button>
+            <Button className="bg-primary text-white" onClick={() => onOpenChange(false)}>
+              Publicar
             </Button>
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-              <Input type="datetime-local" value={scheduleAt} onChange={(e) => onScheduleAtChange(e.target.value)} className="h-9" />
-              <Button variant="secondary">Agendar</Button>
-              <Button className="bg-primary text-white" onClick={() => onOpenChange(false)}>
-                Publicar
-              </Button>
-            </div>
           </div>
-        </SheetFooter>
+        </div>
       </SheetContent>
     </Sheet>
   )

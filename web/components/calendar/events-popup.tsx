@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { CalendarEvent } from "./types";
-import { EventItem } from "../event-item";
+import { EventItem } from "./event-item";
 
 interface EventsPopupProps {
   date: Date;

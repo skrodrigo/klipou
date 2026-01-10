@@ -65,11 +65,13 @@ function ComboboxInput({
           <InputGroupButton
             size="icon-xs"
             variant="ghost"
-            render={<ComboboxTrigger />}
             data-slot="input-group-button"
             className="group-has-data-[slot=combobox-clear]/input-group:hidden data-pressed:bg-transparent"
             disabled={disabled}
-          />
+            asChild
+          >
+            <ComboboxTrigger />
+          </InputGroupButton>
         )}
         {showClear && <ComboboxClear disabled={disabled} />}
       </InputGroupAddon>
@@ -233,7 +235,15 @@ function ComboboxChip({
     >
       {children}
       {showRemove && (
-        <ComboboxPrimitive.ChipRemove className="-ml-1 opacity-50 hover:opacity-100" data-slot="combobox-chip-remove" render={<Button variant="ghost" size="icon-xs"><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="pointer-events-none" /></Button>} />
+        <ComboboxPrimitive.ChipRemove
+          className="-ml-1 opacity-50 hover:opacity-100"
+          data-slot="combobox-chip-remove"
+          render={
+            <Button variant="ghost" size="icon" className="size-6">
+              <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="pointer-events-none" />
+            </Button>
+          }
+        />
       )}
     </ComboboxPrimitive.Chip>
   )

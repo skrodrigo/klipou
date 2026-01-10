@@ -4,10 +4,6 @@ import { RiCalendarLine, RiDeleteBinLine } from "@remixicon/react";
 import { format, isBefore } from "date-fns";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type {
-  CalendarEvent,
-  EventColor,
-} from "@/components/event-calendar";
 import {
   DefaultEndHour,
   DefaultStartHour,
@@ -42,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { CalendarEvent, EventColor } from "./types";
 
 interface EventDialogProps {
   event: CalendarEvent | null;
@@ -322,9 +319,9 @@ export function EventDialog({
             {!allDay && (
               <div className="min-w-28 *:not-first:mt-1.5">
                 <Label htmlFor="start-time">Start Time</Label>
-                <Select onValueChange={setStartTime} value={startTime}>
+                <Select value={startTime} >
                   <SelectTrigger id="start-time">
-                    <SelectValue placeholder="Select time" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {timeOptions.map((option) => (
@@ -387,9 +384,9 @@ export function EventDialog({
             {!allDay && (
               <div className="min-w-28 *:not-first:mt-1.5">
                 <Label htmlFor="end-time">End Time</Label>
-                <Select onValueChange={setEndTime} value={endTime}>
+                <Select value={endTime}>
                   <SelectTrigger id="end-time">
-                    <SelectValue placeholder="Select time" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {timeOptions.map((option) => (
@@ -427,7 +424,7 @@ export function EventDialog({
             <RadioGroup
               className="flex gap-1.5"
               defaultValue={colorOptions[0]?.value}
-              onValueChange={(value: EventColor) => setColor(value)}
+
               value={color}
             >
               {colorOptions.map((colorOption) => (

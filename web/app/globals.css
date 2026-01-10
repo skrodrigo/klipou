@@ -1,7 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+
 @import "tailwindcss";
 @import "tw-animate-css";
-
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
 
 @font-face {
   font-family: "SF Pro Rounded";
@@ -122,7 +122,7 @@
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(76.05% 0.149 41.59);
   --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --input: oklch(28.64% 0.011 278.17);
   --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.811 0.111 293.571);
   --chart-2: oklch(0.606 0.25 292.717);
@@ -159,7 +159,7 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(76.05% 0.149 41.59);
   --border: oklch(31.07% 0.007 285.98);
-  --input: oklch(21.52% 0.008 285.73);
+  --input:  oklch(28.64% 0.011 278.17);
   --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.811 0.111 293.571);
   --chart-2: oklch(0.606 0.25 292.717);

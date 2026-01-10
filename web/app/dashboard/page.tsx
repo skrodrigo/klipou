@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,6 +26,14 @@ const SUPPORTED_PLATFORMS = [
 ]
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardPageInner />
+    </Suspense>
+  )
+}
+
+function DashboardPageInner() {
   const searchParams = useSearchParams()
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
