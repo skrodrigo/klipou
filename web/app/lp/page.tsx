@@ -167,10 +167,6 @@ export default function LandingPage() {
 
             <Drawer open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} direction="bottom">
               <DrawerContent>
-                <DrawerHeader>
-                  <DrawerTitle>Navegação</DrawerTitle>
-                </DrawerHeader>
-
                 <div className="px-4 pb-4">
                   <div className="flex flex-col gap-2">
                     {navLinks.map((l) => (
