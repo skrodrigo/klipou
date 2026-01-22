@@ -11,7 +11,7 @@ from .job_utils import get_plan_tier, update_job_status
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=3, acks_late=False)
 def extract_thumbnail_task(self, video_id: str):
     video = None
     cap = None

@@ -44,9 +44,13 @@ export function AuthRegisterForm() {
 
   const { mutate, isPending } = useMutation({
     mutationFn: (payload: RegisterPayload) => registerUser(payload),
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success("Registro realizado com sucesso!");
       queryClient.invalidateQueries({ queryKey: ["auth-session"] });
+      if (data?.needs_onboarding) {
+        router.push("/onboarding");
+        return;
+      }
       router.push("/dashboard");
     },
     onError: (error) => {
@@ -81,6 +85,17 @@ export function AuthRegisterForm() {
     <Form {...form}>
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 w-full max-w-xs mx-auto">
+        <div className="space-y-3 mb-10">
+          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 bg-foreground text-background">
+            <img src="/logos/google.svg" alt="Google" className="w-5 h-5" />
+            <span>Continuar com Google</span>
+          </Button>
+          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 dark:bg-black bg-foreground dark:text-foreground">
+            <img src="/logos/apple.svg" alt="Apple" className="w-5 h-5 dark:block hidden" />
+            <img src="/logos/apple-black.svg" alt="Apple" className="w-5 h-5 dark:hidden block" />
+            <span>Continuar com Apple</span>
+          </Button>
+        </div>
         <FormField
           control={form.control}
           name="email"
@@ -123,18 +138,6 @@ export function AuthRegisterForm() {
         <Button type="submit" disabled={isPending} className="w-full">
           {isPending ? <Spinner /> : "Registrar"}
         </Button>
-        <div className="space-y-3 mt-10">
-          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 bg-foreground text-background">
-            <img src="/logos/google.svg" alt="Google" className="w-5 h-5" />
-            <span>Continuar com Google</span>
-          </Button>
-          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 dark:bg-black bg-foreground dark:text-foreground">
-            <img src="/logos/apple.svg" alt="Apple" className="w-5 h-5 dark:block hidden" />
-            <img src="/logos/apple-black.svg" alt="Apple" className="w-5 h-5 dark:hidden block" />
-            <span>Continuar com Apple</span>
-          </Button>
-        </div>
-
       </form>
     </Form>
   );

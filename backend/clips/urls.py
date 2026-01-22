@@ -5,13 +5,13 @@ from .views.video_clips_list_view import video_clips_list
 from .views.video_progress_sse_view import video_progress_sse
 from .views.video_status_update_view import video_status_update_view
 from .views.video_management_view import get_video_details, rename_video, delete_video
-from .views.job_views import get_job_status, list_jobs, sse_job_status
+from .views.job_views import get_job_status, list_jobs, sse_job_status, create_job
 from .views.clip_views import download_clip, delete_clip, submit_clip_feedback, get_clip_details, rename_clip, duplicate_clip
 from .views.trim_views import get_video_trim_context, update_clip_trim
 from .views.stripe_webhook_view import stripe_webhook
 from .views.schedule_views import list_schedules, create_schedule, update_schedule, cancel_schedule
 from .views.integration_views import list_integrations, connect_integration, oauth_callback, disconnect_integration
-from .views.organization_views import create_organization, get_organization, update_organization, get_organization_credits, add_team_member, remove_team_member
+from .views.organization_views import create_organization, get_organization, update_organization, get_organization_credits
 from .views.admin_views import reprocess_job, cancel_job, adjust_credits, get_job_failures, get_step_statistics
 from .views.onboarding_views import get_csrf_token, onboarding_view, get_onboarding, update_onboarding
 from .views.team_member_views import list_team_members, invite_team_member, remove_team_member, update_team_member_role

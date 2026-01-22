@@ -1,3 +1,4 @@
+
 import json
 
 from django.contrib.auth import login
@@ -27,7 +28,7 @@ def register_view(request: HttpRequest) -> JsonResponse:
     user, error, organization_data = register_service(
         email=email,
         password=password,
-        organization_name=organization_name
+        organization_name=organization_name,
     )
     if error is not None or user is None:
         return JsonResponse({"detail": error or "Invalid data"}, status=400)
@@ -38,6 +39,8 @@ def register_view(request: HttpRequest) -> JsonResponse:
             "detail": "User registered successfully",
             "email": user.email,
             "organization": organization_data,
+            "needs_onboarding": True,
         },
         status=201,
     )
+

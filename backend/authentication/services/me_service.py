@@ -1,6 +1,5 @@
 from typing import Any, Dict
-from clips.models.team_member import TeamMember
-from clips.models.organization import Organization
+from clips.models.organization_member import OrganizationMember
 
 
 def me_service(user) -> Dict[str, Any]:
@@ -9,10 +8,17 @@ def me_service(user) -> Dict[str, Any]:
     organization_data = None
     
     try:
-        team_member = TeamMember.objects.filter(user_id=user.user_id).first()
-        if team_member:
-            organization_id = str(team_member.organization_id)
-            organization = Organization.objects.get(organization_id=team_member.organization_id)
+        organization = getattr(user, "current_organization", None)
+        if not organization:
+            membership = (
+                OrganizationMember.objects.filter(user_id=user.user_id, is_active=True)
+                .select_related("organization")
+                .first()
+            )
+            organization = membership.organization if membership else None
+
+        if organization:
+            organization_id = str(organization.organization_id)
             organization_data = {
                 "organization_id": str(organization.organization_id),
                 "name": organization.name,

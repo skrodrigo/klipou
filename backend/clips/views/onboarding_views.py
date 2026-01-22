@@ -11,7 +11,7 @@ from django.middleware.csrf import get_token
 from authentication.models import CustomUser
 from ..services.onboarding_service import OnboardingService
 from ..models.organization import Organization
-from ..models.team_member import TeamMember
+from ..models.organization_member import OrganizationMember
 import uuid
 
 
@@ -111,12 +111,17 @@ def onboarding_view(request):
                     billing_email=user.email,
                 )
                 
-                # Adiciona usuário como líder da organização
-                TeamMember.objects.create(
-                    organization_id=organization.organization_id,
-                    user_id=user.user_id,
-                    role="leader",
+                # Adiciona usuário como admin da organização
+                OrganizationMember.objects.create(
+                    organization=organization,
+                    user=user,
+                    role="admin",
+                    is_active=True,
                 )
+
+                if hasattr(user, "current_organization"):
+                    user.current_organization = organization
+                    user.save(update_fields=["current_organization"])
             except Exception as e:
                 return Response(
                     {"error": f"Erro ao criar organização: {str(e)}"},

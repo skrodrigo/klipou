@@ -2,6 +2,7 @@ import logging
 import os
 import uuid
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
@@ -13,7 +14,7 @@ from ..services.storage_service import R2StorageService
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=5)
+@shared_task(bind=True, max_retries=5, acks_late=False)
 def clip_generation_task(self, video_id: str) -> dict:
     try:
         logger.info(f"Iniciando renderização final para video_id: {video_id}")
@@ -49,11 +50,9 @@ def clip_generation_task(self, video_id: str) -> dict:
         generated_clips = []
 
         total_clips = len(selected_clips)
-        
-        for idx, clip in enumerate(selected_clips):
-            progress = 85 + int((idx / total_clips) * 10)
-            update_job_status(str(video.video_id), "rendering", progress=progress, current_step=f"rendering_clip_{idx+1}")
 
+        render_jobs = []
+        for idx, clip in enumerate(selected_clips):
             clip_uuid = uuid.uuid4()
             start_time = float(clip.get("start_time", 0))
             end_time = float(clip.get("end_time", 0))
@@ -65,57 +64,112 @@ def clip_generation_task(self, video_id: str) -> dict:
                     end_time = end_time + 1.0
             except Exception:
                 end_time = end_time + 1.0
+
             hook_title = clip.get("title") or clip.get("hook_title", f"Clip {idx + 1}")
-            
             matched_caption = next((c for c in caption_files if c.get("index") == idx), None)
             ass_file = matched_caption.get("ass_file") if matched_caption else None
 
             clip_filename = f"clip_{clip_uuid}.mp4"
             clip_path = os.path.join(output_dir, clip_filename)
 
-            _render_clip(
-                input_path=input_path,
-                output_path=clip_path,
-                start_time=start_time,
-                end_time=end_time,
-                crop_config=crop_config,
-                ass_file=ass_file
+            render_jobs.append(
+                {
+                    "idx": idx,
+                    "clip_uuid": clip_uuid,
+                    "clip_path": clip_path,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "hook_title": hook_title,
+                    "ass_file": ass_file,
+                    "transcript_text": clip.get("text", ""),
+                    "score_0_100": float(clip.get("score", 0) or 0),
+                }
             )
 
-            file_size = os.path.getsize(clip_path)
-            clip_storage_path = storage.upload_clip(
-                file_path=clip_path,
-                organization_id=str(video.organization_id),
-                video_id=str(video.video_id),
-                clip_id=str(clip_uuid),
-            )
+        max_workers = int(
+            getattr(settings, "CLIP_RENDER_MAX_WORKERS", None)
+            or max(1, min(4, (os.cpu_count() or 2)))
+        )
 
-            transcript_text = clip.get("text", "")
-            
-            score_0_100 = float(clip.get("score", 0) or 0)
-            engagement_score = round(score_0_100 / 10.0, 2) 
-            
-            Clip.objects.create(
-                clip_id=clip_uuid,
-                video=video,
-                title=hook_title,
-                start_time=start_time,
-                end_time=end_time,
-                duration=end_time - start_time,
-                storage_path=clip_storage_path,
-                file_size=file_size,
-                transcript=transcript_text,
-                engagement_score=engagement_score,
-                confidence_score=0
-            )
+        completed = 0
+        failures: list[dict] = []
 
-            generated_clips.append({
-                "clip_id": str(clip_uuid),
-                "url": clip_storage_path,
-            })
+        update_job_status(str(video.video_id), "rendering", progress=85, current_step="rendering")
 
-            if os.path.exists(clip_path):
-                os.remove(clip_path)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_job = {
+                executor.submit(
+                    _render_clip,
+                    input_path,
+                    job["clip_path"],
+                    job["start_time"],
+                    job["end_time"],
+                    crop_config,
+                    job["ass_file"],
+                ): job
+                for job in render_jobs
+            }
+
+            for future in as_completed(future_to_job):
+                job = future_to_job[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    failures.append({"idx": job["idx"], "error": str(e)})
+                    logger.error(f"Falha ao renderizar clip idx={job['idx']}: {e}")
+                    if os.path.exists(job["clip_path"]):
+                        try:
+                            os.remove(job["clip_path"])
+                        except Exception:
+                            pass
+                    continue
+
+                completed += 1
+                progress = 85 + int((completed / total_clips) * 10)
+                update_job_status(
+                    str(video.video_id),
+                    "rendering",
+                    progress=progress,
+                    current_step=f"rendering_clip_{completed}/{total_clips}",
+                )
+
+                clip_path = job["clip_path"]
+                file_size = os.path.getsize(clip_path)
+                clip_storage_path = storage.upload_clip(
+                    file_path=clip_path,
+                    organization_id=str(video.organization_id),
+                    video_id=str(video.video_id),
+                    clip_id=str(job["clip_uuid"]),
+                )
+
+                engagement_score = round(job["score_0_100"] / 10.0, 2)
+
+                Clip.objects.create(
+                    clip_id=job["clip_uuid"],
+                    video=video,
+                    title=job["hook_title"],
+                    start_time=job["start_time"],
+                    end_time=job["end_time"],
+                    duration=job["end_time"] - job["start_time"],
+                    storage_path=clip_storage_path,
+                    file_size=file_size,
+                    transcript=job["transcript_text"],
+                    engagement_score=engagement_score,
+                    confidence_score=0,
+                )
+
+                generated_clips.append(
+                    {
+                        "clip_id": str(job["clip_uuid"]),
+                        "url": clip_storage_path,
+                    }
+                )
+
+                if os.path.exists(clip_path):
+                    os.remove(clip_path)
+
+        if not generated_clips:
+            raise Exception(f"Nenhum clip renderizado com sucesso. failures={failures[:3]}")
 
         video.last_successful_step = "rendering"
         video.status = "done"
@@ -157,6 +211,8 @@ def _render_clip(
     ffmpeg_path = getattr(settings, "FFMPEG_PATH", "ffmpeg")
     duration = end_time - start_time
 
+    target_height = int(getattr(settings, "CLIP_RENDER_TARGET_HEIGHT", 720) or 720)
+
     filter_chain = []
     
     if crop_config:
@@ -169,6 +225,9 @@ def _render_clip(
     if ass_file and os.path.exists(ass_file):
         clean_ass_path = ass_file.replace("\\", "/").replace(":", "\\:")
         filter_chain.append(f"ass='{clean_ass_path}'")
+
+    if target_height and int(target_height) > 0:
+        filter_chain.append(f"scale=-2:{int(target_height)}")
 
     vf_arg = ",".join(filter_chain)
 
@@ -185,7 +244,7 @@ def _render_clip(
 
     cmd.extend([
         "-c:v", "libx264",
-        "-preset", "slow",
+        "-preset", "medium",
         "-crf", "21",
         "-c:a", "aac",
         "-b:a", "192k",

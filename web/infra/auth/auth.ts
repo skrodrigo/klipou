@@ -57,3 +57,21 @@ export async function updateProfile(payload: UpdateProfilePayload): Promise<Upda
     body: JSON.stringify(payload),
   });
 }
+
+export async function listOrganizations(): Promise<{ organizations: Organization[] }> {
+  return request<{ organizations: Organization[] }>("/api/auth/organizations/");
+}
+
+export async function createOrganization(payload: { name: string; color?: string }): Promise<Organization> {
+  return request<Organization>("/api/auth/organizations/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function switchOrganization(organizationId: string): Promise<{ detail: string }> {
+  return request<{ detail: string }>("/api/auth/organizations/switch/", {
+    method: "POST",
+    body: JSON.stringify({ organization_id: organizationId }),
+  });
+}

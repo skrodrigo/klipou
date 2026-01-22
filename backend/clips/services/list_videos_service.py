@@ -4,7 +4,7 @@ from ..models import Video
 from .storage_service import R2StorageService
 
 
-def list_videos() -> List[Dict[str, Any]]:
+def list_videos(organization_id: str | None = None) -> List[Dict[str, Any]]:
     """
     Lista todos os vídeos ordenados por data de criação (mais recentes primeiro).
     Retorna URLs assinadas para thumbnails e clips.
@@ -17,7 +17,11 @@ def list_videos() -> List[Dict[str, Any]]:
     storage = R2StorageService()
     videos = []
     
-    for video in Video.objects.prefetch_related("clips").order_by("-created_at"):
+    qs = Video.objects.prefetch_related("clips")
+    if organization_id:
+        qs = qs.filter(organization_id=organization_id)
+
+    for video in qs.order_by("-created_at"):
         status_data = cache.get(f"video_status_{video.video_id}")
         progress = status_data.get("progress", 0) if status_data else 0
         

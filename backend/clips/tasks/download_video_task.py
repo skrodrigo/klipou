@@ -13,7 +13,7 @@ from .job_utils import get_plan_tier, update_job_status
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=5)
+@shared_task(bind=True, max_retries=5, acks_late=False)
 def download_video_task(self, video_id: str) -> dict:
     video = None
     temp_dir = None
@@ -61,11 +61,29 @@ def download_video_task(self, video_id: str) -> dict:
             video_path = downloaded["video_path"]
             info = downloaded.get("info") or {}
 
+            logger.info(
+                "Download retornou caminho=%s size=%s bytes",
+                video_path,
+                os.path.getsize(video_path) if os.path.exists(video_path) else "<missing>",
+            )
+
             if video_path != local_video_path:
                 if os.path.exists(local_video_path):
                     os.remove(local_video_path)
+
+                update_job_status(
+                    str(video.video_id),
+                    "downloading",
+                    progress=12,
+                    current_step="moving_downloaded_file",
+                )
+                logger.info("Movendo arquivo baixado para %s", local_video_path)
                 shutil.move(video_path, local_video_path)
                 video_path = local_video_path
+                logger.info(
+                    "Arquivo movido. size=%s bytes",
+                    os.path.getsize(video_path) if os.path.exists(video_path) else "<missing>",
+                )
 
             original_filename = _guess_original_filename(info, fallback="video_original.mp4")
             video.original_filename = original_filename
@@ -75,6 +93,17 @@ def download_video_task(self, video_id: str) -> dict:
 
             if not video.storage_path:
                 try:
+                    update_job_status(
+                        str(video.video_id),
+                        "downloading",
+                        progress=13,
+                        current_step="uploading_original_to_r2",
+                    )
+                    logger.info(
+                        "Iniciando upload do vídeo original para R2: path=%s size=%s bytes",
+                        video_path,
+                        os.path.getsize(video_path) if os.path.exists(video_path) else "<missing>",
+                    )
                     uploaded_key = storage.upload_video(
                         file_path=video_path,
                         organization_id=str(video.organization_id),
@@ -82,11 +111,13 @@ def download_video_task(self, video_id: str) -> dict:
                         original_filename=video.original_filename or "video_original.mp4",
                     )
                     video.storage_path = uploaded_key
+                    logger.info("Upload para R2 concluído: key=%s", uploaded_key)
                 except Exception as e:
                     logger.warning(f"Falha ao fazer upload do vídeo original para o R2: {e}")
         else:
             raise Exception("Nenhuma fonte de vídeo disponível (storage_path ou source_url)")
 
+        update_job_status(str(video.video_id), "downloading", progress=14, current_step="validating_video")
         logger.info(f"Validando vídeo: {video_path}")
         duration, resolution, codec = _validate_video(video_path)
 
@@ -173,14 +204,28 @@ def _download_from_source_url(source_url: str, output_dir: str) -> dict:
 
     proxy_url = os.getenv("PROXY_URL")
 
+    concurrent_frags = int(getattr(settings, "YTDLP_CONCURRENT_FRAGMENT_DOWNLOADS", 4) or 4)
+    http_chunk_size = int(getattr(settings, "YTDLP_HTTP_CHUNK_SIZE", 10 * 1024 * 1024) or (10 * 1024 * 1024))
+
+    max_height = int(getattr(settings, "YTDLP_MAX_HEIGHT", 720) or 720)
+    # Prefer H.264 (avc1) + m4a, but cap resolution for speed.
+    fmt = (
+        f"bv*[ext=mp4][vcodec^=avc1][height<={max_height}]+ba[ext=m4a]/"
+        f"bv*[ext=mp4][height<={max_height}]+ba[ext=m4a]/"
+        f"b[ext=mp4][height<={max_height}]/"
+        f"bv*+ba/b"
+    )
+
     ydl_opts = {
-        "format": "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        "format": fmt,
         "merge_output_format": "mp4",
         "outtmpl": output_template,
         "noplaylist": True,
         "retries": 3,
         "fragment_retries": 3,
         "socket_timeout": 30,
+        "concurrent_fragment_downloads": concurrent_frags,
+        "http_chunk_size": http_chunk_size,
         "continuedl": False,
         "nopart": True,
         "keepvideo": True,

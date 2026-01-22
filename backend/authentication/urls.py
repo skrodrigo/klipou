@@ -5,6 +5,7 @@ from .views.logout_view import logout_view
 from .views.register_view import register_view
 from .views.me_view import me_view
 from .views.update_profile_view import update_profile_view
+from .views.organizations_view import organizations_view, switch_organization_view
 from .views.oauth_callback_view import (
     oauth_authorize,
     oauth_callback,
@@ -18,7 +19,9 @@ urlpatterns = [
     path("logout/", logout_view, name="auth-logout"),
     path("register/", register_view, name="auth-register"),
     path("me/", me_view, name="auth-me"),
-    path("me/update/", update_profile_view, name="auth-update-profile"),
+    path("me/update/", update_profile_view, name="update_profile"),
+    path("organizations/", organizations_view, name="organizations"),
+    path("organizations/switch/", switch_organization_view, name="switch_organization"),
     
     # OAuth endpoints
     path("oauth/authorize/<str:platform>/", oauth_authorize, name="oauth-authorize"),

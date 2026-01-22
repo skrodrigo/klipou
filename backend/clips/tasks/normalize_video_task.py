@@ -12,7 +12,7 @@ from .job_utils import get_plan_tier, update_job_status
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=5)
+@shared_task(bind=True, max_retries=5, acks_late=False)
 def normalize_video_task(self, video_id: str) -> dict:
     try:
         logger.info(f"Iniciando normalização de vídeo para video_id: {video_id}")

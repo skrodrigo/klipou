@@ -193,6 +193,7 @@ GEMINI_REFINE_MAX_SEGMENTS = int(os.getenv('GEMINI_REFINE_MAX_SEGMENTS', '120'))
 
 # Whisper tuning (optional)
 WHISPER_MODEL = os.getenv('WHISPER_MODEL')
+WHISPER_DEVICE = os.getenv('WHISPER_DEVICE')
 WHISPER_WORD_TIMESTAMPS = os.getenv('WHISPER_WORD_TIMESTAMPS', 'true').lower() == 'true'
 WHISPER_BEAM_SIZE = int(os.getenv('WHISPER_BEAM_SIZE', '1'))
 WHISPER_BEST_OF = int(os.getenv('WHISPER_BEST_OF', '1'))

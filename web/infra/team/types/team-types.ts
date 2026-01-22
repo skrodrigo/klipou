@@ -1,20 +1,19 @@
 export type TeamMember = {
-  member_id: string;
-  user_id: number;
-  organization_id: string;
-  role: "member" | "co-leader" | "leader";
+  membership_id: string;
+  user_id: string;
+  role: "member" | "admin";
   joined_at: string;
-  is_active: boolean;
 };
 
 export type InviteTeamMemberPayload = {
   email: string;
-  role: "member" | "co-leader" | "leader";
+  role: "member" | "admin";
 };
 
 export type InviteTeamMemberResponse = {
-  detail: string;
-  member: TeamMember;
+  status: string;
+  email: string;
+  role: "member" | "admin";
 };
 
 export type ListTeamMembersResponse = {
@@ -23,14 +22,15 @@ export type ListTeamMembersResponse = {
 };
 
 export type UpdateTeamMemberRolePayload = {
-  role: "member" | "co-leader" | "leader";
+  role: "member" | "admin";
 };
 
 export type UpdateTeamMemberRoleResponse = {
-  detail: string;
-  member: TeamMember;
+  membership_id: string;
+  role: "member" | "admin";
 };
 
 export type RemoveTeamMemberResponse = {
-  detail: string;
+  membership_id: string;
+  status: string;
 };

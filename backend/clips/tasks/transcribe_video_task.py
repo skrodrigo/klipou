@@ -7,6 +7,8 @@ import torch
 import time
 from celery import shared_task
 from django.conf import settings
+from google import genai
+from google.genai import types
 
 from ..models import Video, Transcript, Organization
 from .job_utils import get_plan_tier, update_job_status
@@ -15,7 +17,7 @@ from ..services.storage_service import R2StorageService
 logger = logging.getLogger(__name__)
 
 _model_cache = None
-_gemini_configured = False
+_gemini_client = None
 
 
 def _should_use_cuda() -> bool:
@@ -54,7 +56,7 @@ def _get_whisper_model():
     except ImportError:
         raise RuntimeError("Biblioteca 'faster-whisper' não encontrada. Instale: pip install faster-whisper")
 
-    model_size = getattr(settings, "WHISPER_MODEL", "small")
+    model_size = getattr(settings, "WHISPER_MODEL", "tiny")
     local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
 
     for noisy_logger in ("httpx", "httpcore", "huggingface_hub"):
@@ -62,12 +64,20 @@ def _get_whisper_model():
 
     device = "cuda" if _should_use_cuda() else "cpu"
 
-    compute_type = "float16" if device == "cuda" else "int8"
+    if device == "cuda":
+        fp16_enabled = bool(getattr(settings, "WHISPER_FP16", True))
+        compute_type = "float16" if fp16_enabled else "int8_float16"
+
+        override = getattr(settings, "WHISPER_CUDA_COMPUTE_TYPE", None)
+        if isinstance(override, str) and override.strip():
+            compute_type = override.strip()
+    else:
+        compute_type = "int8"
 
     model_source = local_model_dir or model_size
 
-    logger.debug(
-        "Carregando Faster-Whisper '%s' em %s (%s)%s",
+    logger.info(
+        "[whisper] loading model=%s device=%s compute_type=%s%s",
         model_size,
         device,
         compute_type,
@@ -108,11 +118,11 @@ def _get_whisper_model():
     return _model_cache
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=5, acks_late=False)
 def transcribe_video_task(self, video_id: str) -> dict:
     audio_path = None
     try:
-        logger.debug("Iniciando transcrição para video_id=%s", video_id)
+        logger.info(f"Iniciando transcrição para video_id: {video_id}")
 
         video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
@@ -273,7 +283,7 @@ def _transcribe_with_whisper(audio_path: str) -> dict:
             except Exception:
                 pass
             from faster_whisper import WhisperModel
-            model_size = getattr(settings, "WHISPER_MODEL", "small")
+            model_size = getattr(settings, "WHISPER_MODEL", "tiny")
             local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
             model_source = local_model_dir or model_size
             _model_cache = WhisperModel(model_source, device="cpu", compute_type="int8")
@@ -317,24 +327,8 @@ def _transcribe_with_whisper(audio_path: str) -> dict:
     }
 
 
-def _configure_gemini() -> None:
-    global _gemini_configured
-    if _gemini_configured:
-        return
-
-    api_key = getattr(settings, "GEMINI_API_KEY", None)
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY não configurada")
-
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    _gemini_configured = True
-
-
 def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
-    _configure_gemini()
-
-    import google.generativeai as genai
+    client = _get_gemini_client()
 
     segments = transcript_data.get("segments") or []
     language = (transcript_data.get("language") or "").lower()
@@ -411,10 +405,10 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
     }
 
     model_name = getattr(settings, "GEMINI_REFINE_MODEL", "gemini-2.5-flash-lite")
-    model = genai.GenerativeModel(model_name)
-    response = model.generate_content(
-        f"{prompt}\n\nSEGMENTS JSON:\n{json.dumps(payload, ensure_ascii=False)}",
-        generation_config=genai.types.GenerationConfig(
+    response = client.models.generate_content(
+        model=f'models/{model_name}',
+        contents=f"{prompt}\n\nSEGMENTS JSON:\n{json.dumps(payload, ensure_ascii=False)}",
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=response_schema,
             temperature=float(getattr(settings, "GEMINI_REFINE_TEMPERATURE", 0.2) or 0.2),
@@ -447,6 +441,19 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
             "segments_refined": len(out_segments[:max_segments]),
         },
     }
+
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client:
+        return _gemini_client
+
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+
+    _gemini_client = genai.Client(api_key=api_key)
+    return _gemini_client
 
 
 def _save_srt_file(transcript_data: dict, srt_path: str) -> None:

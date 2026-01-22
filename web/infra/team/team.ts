@@ -40,10 +40,10 @@ export async function inviteTeamMember(
 
 export async function removeTeamMember(
   organizationId: string,
-  memberId: string
+  membershipId: string
 ): Promise<RemoveTeamMemberResponse> {
   return request<RemoveTeamMemberResponse>(
-    `/api/organizations/${organizationId}/members/${memberId}/`,
+    `/api/organizations/${organizationId}/members/${membershipId}/`,
     {
       method: "DELETE",
     }
@@ -52,11 +52,11 @@ export async function removeTeamMember(
 
 export async function updateTeamMemberRole(
   organizationId: string,
-  memberId: string,
+  membershipId: string,
   payload: UpdateTeamMemberRolePayload
 ): Promise<UpdateTeamMemberRoleResponse> {
   return request<UpdateTeamMemberRoleResponse>(
-    `/api/organizations/${organizationId}/members/${memberId}/role/`,
+    `/api/organizations/${organizationId}/members/${membershipId}/role/`,
     {
       method: "PUT",
       body: JSON.stringify(payload),

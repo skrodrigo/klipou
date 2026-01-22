@@ -77,16 +77,11 @@ def _detect_smart_crop(video_path: str) -> dict:
     except ImportError:
         raise Exception("Instale: pip install opencv-python mediapipe")
 
-    if not hasattr(mp, "solutions"):
-        mp_file = getattr(mp, "_file_", None)
-        raise Exception(
-            "Mediapipe importado não possui 'solutions'. Possível conflito de módulo/instalação. "
-            f"Arquivo importado: {mp_file}. Garanta que o pacote 'mediapipe' oficial está instalado e "
-            "que não existe arquivo/pasta local chamada 'mediapipe'."
-        )
+    FaceDetector = mp.tasks.vision.FaceDetector
+    FaceDetectorOptions = mp.tasks.vision.FaceDetectorOptions
+    VisionRunningMode = mp.tasks.vision.RunningMode
+    BaseOptions = mp.tasks.BaseOptions
 
-    mp_face_detection = mp.solutions.face_detection
-    
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise Exception("Erro ao abrir vídeo para análise")
@@ -96,44 +91,60 @@ def _detect_smart_crop(video_path: str) -> dict:
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    model_path = getattr(settings, "MEDIAPIPE_FACE_MODEL_PATH", None) or os.path.join(
+        settings.BASE_DIR, "assets", "blaze_face_short_range.tflite"
+    )
+    if not os.path.exists(model_path):
+        cap.release()
+        stable_center_x = width // 2
+        crops = _calculate_crops(width, height, stable_center_x)
+        return {
+            "face_detected": False,
+            "video_resolution": f"{width}x{height}",
+            "crops": crops,
+            "raw_face_centers_count": 0,
+        }
+
+    options = FaceDetectorOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        min_detection_confidence=0.6,
+        running_mode=VisionRunningMode.IMAGE
+    )
+
     face_centers_x = []
-    
-    # Otimização: amostragem configurável (em segundos) + early-stop.
-    # Não reduz a qualidade do render final; apenas reduz custo da análise.
+
     sample_every_seconds = float(getattr(settings, "REFRAME_SAMPLE_EVERY_SECONDS", 1.0) or 1.0)
     max_samples = int(getattr(settings, "REFRAME_MAX_FACE_SAMPLES", 240) or 240)
     min_samples_to_stop = int(getattr(settings, "REFRAME_MIN_SAMPLES_TO_STOP", 90) or 90)
 
     effective_fps = fps if isinstance(fps, (int, float)) and fps and fps > 0 else 30.0
     stride = max(1, int(round(effective_fps * sample_every_seconds)))
-    
-    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.6) as face_detection:
-        for i in range(0, total_frames, stride):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-            ret, frame = cap.read()
-            if not ret:
-                break
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_detection.process(frame_rgb)
-
-            if results.detections:
-                best_detection = max(results.detections, key=lambda d: d.score[0])
-                
-                bboxC = best_detection.location_data.relative_bounding_box
-                
-                center_x = int((bboxC.xmin + bboxC.width / 2) * width)
-                face_centers_x.append(center_x)
-
-                # Early-stop: quando já temos amostras suficientes, não há ganho em continuar varrendo o vídeo todo.
-                if len(face_centers_x) >= max_samples:
+    try:
+        with FaceDetector.create_from_options(options) as detector:
+            for i in range(0, total_frames, stride):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+                ret, frame = cap.read()
+                if not ret:
                     break
 
-            # Se já temos um mínimo de amostras (qualidade boa), podemos parar cedo.
-            if len(face_centers_x) >= min_samples_to_stop:
-                break
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                detection_result = detector.detect(mp_image)
 
-    cap.release()
+                if detection_result.detections:
+                    best_detection = max(detection_result.detections, key=lambda d: d.categories[0].score)
+                    bbox = best_detection.bounding_box
+
+                    center_x = int(bbox.origin_x + bbox.width / 2)
+                    face_centers_x.append(center_x)
+
+                    if len(face_centers_x) >= max_samples:
+                        break
+
+                if len(face_centers_x) >= min_samples_to_stop:
+                    break
+    finally:
+        cap.release()
 
     face_detected = len(face_centers_x) > 0
     

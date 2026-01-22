@@ -75,6 +75,17 @@ export function AuthLoginForm() {
     <Form {...form}>
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 w-full max-w-xs mx-auto">
+        <div className="space-y-3 mb-10">
+          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 bg-foreground text-background">
+            <img src="/logos/google.svg" alt="Google" className="w-5 h-5" />
+            <span>Continuar com Google</span>
+          </Button>
+          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 dark:bg-black bg-foreground dark:text-foreground">
+            <img src="/logos/apple.svg" alt="Apple" className="w-5 h-5 dark:block hidden" />
+            <img src="/logos/apple-black.svg" alt="Apple" className="w-5 h-5 dark:hidden block" />
+            <span>Continuar com Apple</span>
+          </Button>
+        </div>
         <FormField
           control={form.control}
           name="email"
@@ -104,18 +115,6 @@ export function AuthLoginForm() {
         <Button type="submit" disabled={isPending} className="w-full">
           {isPending ? <Spinner /> : "Entrar"}
         </Button>
-
-        <div className="space-y-3 mt-10">
-          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 bg-foreground text-background">
-            <img src="/logos/google.svg" alt="Google" className="w-5 h-5" />
-            <span>Continuar com Google</span>
-          </Button>
-          <Button type="button" variant="default" className="w-full flex items-center justify-center gap-2 dark:bg-black bg-foreground dark:text-foreground">
-            <img src="/logos/apple.svg" alt="Apple" className="w-5 h-5 dark:block hidden" />
-            <img src="/logos/apple-black.svg" alt="Apple" className="w-5 h-5 dark:hidden block" />
-            <span>Continuar com Apple</span>
-          </Button>
-        </div>
       </form>
 
 

@@ -130,7 +130,7 @@ export function AppSidebar() {
             priority
             quality={100} />
           <TeamSwitcher />
-          <div className="relative w-full">
+          <div className="relative w-full bg-card rounded-md">
             <HugeiconsIcon size={16} icon={Search01Icon} className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Buscar..."

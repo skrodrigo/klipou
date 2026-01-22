@@ -7,7 +7,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from uuid import uuid4
 
-from ..models import TeamMember, Organization
+from ..models import OrganizationMember, Organization
 from ..services.email_service import EmailService
 
 
@@ -26,10 +26,10 @@ def list_team_members(request, organization_id):
         limit = int(request.query_params.get("limit", 20))
         offset = int(request.query_params.get("offset", 0))
 
-        query = TeamMember.objects.filter(
+        query = OrganizationMember.objects.filter(
             organization_id=organization_id,
             is_active=True
-        ).order_by("-joined_at")
+        ).order_by("-created_at")
 
         if role_filter:
             query = query.filter(role=role_filter)
@@ -44,10 +44,10 @@ def list_team_members(request, organization_id):
                 "offset": offset,
                 "members": [
                     {
-                        "member_id": str(member.member_id),
+                        "membership_id": str(member.membership_id),
                         "user_id": str(member.user_id),
                         "role": member.role,
-                        "joined_at": member.joined_at.isoformat(),
+                        "joined_at": member.created_at.isoformat(),
                     }
                     for member in members
                 ],
@@ -85,7 +85,7 @@ def invite_team_member(request, organization_id):
             )
         
         # Valida papel
-        valid_roles = ["member", "co-leader", "leader"]
+        valid_roles = ["member", "admin"]
         if role not in valid_roles:
             return Response(
                 {"error": f"Papel inválido. Válidos: {', '.join(valid_roles)}"},
@@ -134,9 +134,9 @@ def remove_team_member(request, organization_id, member_id):
     }
     """
     try:
-        member = TeamMember.objects.get(
-            member_id=member_id,
-            organization_id=organization_id
+        member = OrganizationMember.objects.get(
+            membership_id=member_id,
+            organization_id=organization_id,
         )
         
         # Soft delete
@@ -145,13 +145,13 @@ def remove_team_member(request, organization_id, member_id):
         
         return Response(
             {
-                "member_id": str(member.member_id),
+                "membership_id": str(member.membership_id),
                 "status": "removed",
             },
             status=status.HTTP_200_OK,
         )
 
-    except TeamMember.DoesNotExist:
+    except OrganizationMember.DoesNotExist:
         return Response(
             {"error": "Membro não encontrado"},
             status=status.HTTP_404_NOT_FOUND,
@@ -184,16 +184,16 @@ def update_team_member_role(request, organization_id, member_id):
             )
         
         # Valida papel
-        valid_roles = ["member", "co-leader", "leader"]
+        valid_roles = ["member", "admin"]
         if role not in valid_roles:
             return Response(
                 {"error": f"Papel inválido. Válidos: {', '.join(valid_roles)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        member = TeamMember.objects.get(
-            member_id=member_id,
-            organization_id=organization_id
+        member = OrganizationMember.objects.get(
+            membership_id=member_id,
+            organization_id=organization_id,
         )
         
         member.role = role
@@ -201,13 +201,13 @@ def update_team_member_role(request, organization_id, member_id):
         
         return Response(
             {
-                "member_id": str(member.member_id),
+                "membership_id": str(member.membership_id),
                 "role": member.role,
             },
             status=status.HTTP_200_OK,
         )
 
-    except TeamMember.DoesNotExist:
+    except OrganizationMember.DoesNotExist:
         return Response(
             {"error": "Membro não encontrado"},
             status=status.HTTP_404_NOT_FOUND,

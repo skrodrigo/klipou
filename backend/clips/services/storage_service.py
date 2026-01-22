@@ -14,6 +14,8 @@ import boto3
 from typing import Optional, Tuple
 from django.conf import settings
 from botocore.exceptions import ClientError
+from botocore.config import Config
+from boto3.s3.transfer import TransferConfig
 
 
 class R2StorageService:
@@ -28,12 +30,32 @@ class R2StorageService:
         self.endpoint_url = f"https://{self.account_id}.r2.cloudflarestorage.com"
         self.public_url = getattr(settings, "CLOUDFLARE_R2_PUBLIC_URL", f"https://{self.bucket_name}.{self.account_id}.r2.cloudflarestorage.com")
 
+        connect_timeout = int(getattr(settings, "R2_CONNECT_TIMEOUT", 10) or 10)
+        read_timeout = int(getattr(settings, "R2_READ_TIMEOUT", 60) or 60)
+        max_attempts = int(getattr(settings, "R2_MAX_ATTEMPTS", 5) or 5)
+        self._client_config = Config(
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retries={"max_attempts": max_attempts, "mode": "standard"},
+        )
+
+        multipart_threshold = int(getattr(settings, "R2_MULTIPART_THRESHOLD", 8 * 1024 * 1024) or (8 * 1024 * 1024))
+        multipart_chunksize = int(getattr(settings, "R2_MULTIPART_CHUNKSIZE", 8 * 1024 * 1024) or (8 * 1024 * 1024))
+        max_concurrency = int(getattr(settings, "R2_MAX_CONCURRENCY", 4) or 4)
+        self._transfer_config = TransferConfig(
+            multipart_threshold=multipart_threshold,
+            multipart_chunksize=multipart_chunksize,
+            max_concurrency=max_concurrency,
+            use_threads=True,
+        )
+
         self.client = boto3.client(
             "s3",
             endpoint_url=self.endpoint_url,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
             region_name="auto",
+            config=self._client_config,
         )
 
     def upload_video(
@@ -157,12 +179,12 @@ class R2StorageService:
             Exception: Se upload falhar
         """
         try:
-            with open(file_path, "rb") as f:
-                self.client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=key,
-                    Body=f,
-                )
+            self.client.upload_file(
+                Filename=file_path,
+                Bucket=self.bucket_name,
+                Key=key,
+                Config=self._transfer_config,
+            )
             return key
         except ClientError as e:
             raise Exception(f"Erro ao fazer upload para R2: {e}") from e

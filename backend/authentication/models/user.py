@@ -29,6 +29,15 @@ class CustomUser(AbstractBaseUser):
     # Onboarding
     onboarding_completed = models.BooleanField(default=False)
     onboarding_data = models.JSONField(default=dict, blank=True)
+
+    # Active organization
+    current_organization = models.ForeignKey(
+        'clips.Organization',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='active_users'
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True, null=True)

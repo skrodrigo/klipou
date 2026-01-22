@@ -3,7 +3,9 @@ from celery import shared_task
 from django.conf import settings
 import numpy as np
 from numpy.linalg import norm
-import google.generativeai as genai
+import json
+from google import genai
+from google.genai import types
 
 from ..models import Video, Transcript, Organization
 from ..services.embedding_cache_service import EmbeddingCacheService
@@ -35,16 +37,16 @@ def embed_classify_task(self, video_id: str) -> dict:
         if not candidates:
             logger.warning(f"Sem candidatos para embedding no vídeo {video_id}")
         else:
-            api_key = getattr(settings, "GEMINI_API_KEY", None)
-            if not api_key:
-                raise Exception("GEMINI_API_KEY não configurada")
-
-            genai.configure(api_key=api_key)
-
+            client = _get_gemini_client()
+            
             texts = [c.get("text", "") for c in candidates if c.get("text")]
             
             if texts:
-                embeddings = _get_batch_embeddings(texts)
+                embeddings = _get_batch_embeddings(client, texts)
+                if len(embeddings) != len(texts):
+                    raise RuntimeError(
+                        f"Embeddings ({len(embeddings)}) != Texts ({len(texts)})"
+                    )
                 
                 reference_patterns = _get_reference_patterns(org.organization_id)
 
@@ -107,7 +109,7 @@ def embed_classify_task(self, video_id: str) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _get_batch_embeddings(texts: list[str], output_dimensionality: int = 768) -> list[list]:
+def _get_batch_embeddings(client, texts: list[str], output_dimensionality: int = 768) -> list[list]:
     if not texts:
         return []
 
@@ -128,34 +130,92 @@ def _get_batch_embeddings(texts: list[str], output_dimensionality: int = 768) ->
         return final_embeddings
     
     try:
-        result = genai.embed_content(
-            model="models/text-embedding-004",
-            content=texts_to_process,
-            task_type="SEMANTIC_SIMILARITY"
-        )
-        
-        embedding_list = result.get('embedding', []) if isinstance(result, dict) else result.embeddings
+        batch_size = int(getattr(settings, "GEMINI_EMBED_BATCH_SIZE", 100) or 100)
+        if batch_size <= 0:
+            batch_size = 100
 
-        for i, embedding_obj in enumerate(embedding_list):
-            if hasattr(embedding_obj, 'values'):
-                vals = embedding_obj.values
-            elif isinstance(embedding_obj, dict):
-                vals = embedding_obj.get('values')
-            else:
-                vals = embedding_obj
-            
-            normalized = _normalize_embedding(vals)
-            
-            original_idx = indices_to_process[i]
-            final_embeddings[original_idx] = normalized
-            
-            EmbeddingCacheService.save_embedding(texts_to_process[i], normalized)
+        total = len(texts_to_process)
+        total_batches = (total - 1) // batch_size + 1
+
+        for batch_i, start in enumerate(range(0, total, batch_size)):
+            end = min(start + batch_size, total)
+            batch_texts = texts_to_process[start:end]
+            batch_indices = indices_to_process[start:end]
+
+            logger.info(
+                "Processando batch embeddings %s/%s (%s textos)",
+                batch_i + 1,
+                total_batches,
+                len(batch_texts),
+            )
+
+            response = client.models.embed_content(
+                model="text-embedding-004",
+                contents=batch_texts,
+                config=types.EmbedContentConfig(output_dimensionality=output_dimensionality),
+            )
+
+            embedding_list = _extract_embedding_values(response)
+            if len(embedding_list) != len(batch_texts):
+                raise RuntimeError(
+                    f"Resposta inesperada do Gemini Embedding: expected={len(batch_texts)} got={len(embedding_list)}"
+                )
+
+            for i, vals in enumerate(embedding_list):
+                if not vals:
+                    continue
+
+                normalized = _normalize_embedding(vals)
+
+                original_idx = batch_indices[i]
+                final_embeddings[original_idx] = normalized
+
+                EmbeddingCacheService.save_embedding(batch_texts[i], normalized)
         
         return final_embeddings
 
     except Exception as e:
         logger.error(f"Erro na API Gemini Embedding: {e}")
         raise e
+
+
+def _extract_embedding_values(response) -> list[list]:
+    def _to_mapping(obj):
+        if isinstance(obj, dict):
+            return obj
+        return None
+
+    def _get_vals(embedding_obj):
+        if embedding_obj is None:
+            return None
+        if isinstance(embedding_obj, dict):
+            return embedding_obj.get("values") or embedding_obj.get("value")
+        vals = getattr(embedding_obj, "values", None)
+        if vals is not None:
+            return vals
+        return getattr(embedding_obj, "value", None)
+
+    resp_map = _to_mapping(response)
+
+    embeddings = None
+    if resp_map is not None:
+        embeddings = resp_map.get("embeddings") or resp_map.get("embedding")
+    else:
+        embeddings = getattr(response, "embeddings", None)
+        if embeddings is None:
+            embeddings = getattr(response, "embedding", None)
+
+    if embeddings is None:
+        return []
+
+    if not isinstance(embeddings, list):
+        embeddings = [embeddings]
+
+    out: list[list] = []
+    for e in embeddings:
+        vals = _get_vals(e)
+        out.append(list(vals) if vals is not None else [])
+    return out
 
 
 def _normalize_embedding(embedding: list) -> list:
@@ -177,13 +237,25 @@ def _get_reference_patterns(organization_id: str) -> list:
         ).values_list('embedding', flat=True)[:10])
         
         if patterns:
-            return [
-                (np.array(p, dtype=np.float32) / (norm(np.array(p, dtype=np.float32)) or 1.0))
-                for p in patterns
-            ]
+            try:
+                parsed_patterns = []
+                for p in patterns:
+                    if isinstance(p, str):
+                        parsed_patterns.append(json.loads(p))
+                    elif isinstance(p, list):
+                        parsed_patterns.append(p)
+
+                return [
+                    (np.array(p_list, dtype=np.float32) / (norm(np.array(p_list, dtype=np.float32)) or 1.0))
+                    for p_list in parsed_patterns
+                ]
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Failed to parse pattern embeddings: {e}", exc_info=True)
+                # Fallback to default on parsing error
+                return [_get_default_viral_embedding()]
             
     except Exception as e:
-        logger.warning(f"Erro ao carregar padrões da org: {e}")
+        logger.warning(f"Error loading organization patterns: {e}", exc_info=True)
 
     return [_get_default_viral_embedding()]
 
@@ -196,7 +268,8 @@ def _get_default_viral_embedding() -> np.ndarray:
     viral_concept = "Viral video, funny moment, engaging clip, high retention, interesting fact, emotional hook"
     
     try:
-        embeds = _get_batch_embeddings([viral_concept])
+        client = _get_gemini_client()
+        embeds = _get_batch_embeddings(client, [viral_concept])
         if embeds and embeds[0]:
             _DEFAULT_VIRAL_EMBEDDING = np.array(embeds[0], dtype=np.float32)
             return _DEFAULT_VIRAL_EMBEDDING
@@ -230,3 +303,10 @@ def _calculate_similarity(embedding: list, reference_patterns: list) -> float:
 def _adjust_score(engagement_score: int, similarity_score: float) -> int:
     adjusted = (engagement_score * 0.7) + (similarity_score * 100 * 0.3)
     return int(np.clip(adjusted, 0, 100))
+
+
+def _get_gemini_client():
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        raise Exception("GEMINI_API_KEY não configurada")
+    return genai.Client(api_key=api_key)

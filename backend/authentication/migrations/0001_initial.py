@@ -2,6 +2,7 @@
 
 import uuid
 from django.db import migrations, models
+import django.db.models.deletion
 
 
 class Migration(migrations.Migration):
@@ -9,6 +10,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
+        ('clips', '0001_initial'),
     ]
 
     operations = [
@@ -23,6 +25,7 @@ class Migration(migrations.Migration):
                 ('is_admin', models.BooleanField(default=False)),
                 ('onboarding_completed', models.BooleanField(default=False)),
                 ('onboarding_data', models.JSONField(blank=True, default=dict)),
+                ('current_organization', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='active_users', to='clips.organization')),
                 ('created_at', models.DateTimeField(auto_now_add=True, null=True)),
                 ('updated_at', models.DateTimeField(auto_now=True, null=True)),
             ],

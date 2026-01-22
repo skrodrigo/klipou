@@ -3,14 +3,15 @@ import logging
 import re
 from celery import shared_task
 from django.conf import settings
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from ..models import Video, Transcript, Organization
 from .job_utils import update_job_status, get_plan_tier
 
 logger = logging.getLogger(__name__)
 
-_gemini_configured = False
+_gemini_client = None
 
 
 @shared_task(bind=True, max_retries=3)
@@ -29,11 +30,18 @@ def analyze_semantic_task(self, video_id: str) -> dict:
         if not transcript:
             raise Exception("Transcrição não encontrada")
 
-        formatted_text = _format_transcript_with_timestamps(transcript.segments)
+        segments = transcript.segments or []
         language = transcript.language
 
         min_d, max_d = _get_duration_bounds(video_id=str(video.video_id))
-        analysis_result = _analyze_with_gemini(formatted_text, language, min_duration=min_d, max_duration=max_d)
+        analysis_result = _analyze_transcript_with_gemini(
+            segments,
+            language,
+            min_duration=min_d,
+            max_duration=max_d,
+            video_duration_s=float(video.duration or 0) if video else 0,
+            video_id=str(video.video_id),
+        )
 
         if "candidates" in analysis_result:
             for c in analysis_result["candidates"]:
@@ -86,17 +94,17 @@ def analyze_semantic_task(self, video_id: str) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _configure_gemini():
-    global _gemini_configured
-    if _gemini_configured:
-        return
-    
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client:
+        return _gemini_client
+
     api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
         raise Exception("GEMINI_API_KEY não configurada")
-    
-    genai.configure(api_key=api_key)
-    _gemini_configured = True
+
+    _gemini_client = genai.Client(api_key=api_key)
+    return _gemini_client
 
 
 def _format_transcript_with_timestamps(segments: list) -> str:
@@ -124,8 +132,144 @@ def _clean_number(num):
         return num
 
 
+def _analyze_transcript_with_gemini(
+    segments: list,
+    language: str,
+    min_duration: int,
+    max_duration: int,
+    video_duration_s: float,
+    video_id: str,
+) -> dict:
+    enable_chunking = bool(getattr(settings, "GEMINI_ANALYZE_ENABLE_CHUNKING", True))
+    chunk_seconds = int(getattr(settings, "GEMINI_ANALYZE_CHUNK_SECONDS", 600) or 600)
+    chunk_threshold_seconds = int(getattr(settings, "GEMINI_ANALYZE_CHUNK_THRESHOLD_SECONDS", 1800) or 1800)
+
+    formatted_text = _format_transcript_with_timestamps(segments)
+
+    should_chunk = False
+    if enable_chunking and chunk_seconds > 0:
+        if isinstance(video_duration_s, (int, float)) and video_duration_s and video_duration_s >= chunk_threshold_seconds:
+            should_chunk = True
+        elif len(formatted_text) >= int(getattr(settings, "GEMINI_ANALYZE_CHUNK_THRESHOLD_CHARS", 45000) or 45000):
+            should_chunk = True
+
+    if not should_chunk:
+        return _analyze_with_gemini(formatted_text, language, min_duration=min_duration, max_duration=max_duration)
+
+    chunks = _chunk_segments_by_time(segments, chunk_seconds)
+    if not chunks:
+        return _analyze_with_gemini(formatted_text, language, min_duration=min_duration, max_duration=max_duration)
+
+    merged_candidates: list[dict] = []
+    merged_title: str | None = None
+    merged_description: str | None = None
+    merged_overall_tone: str | None = None
+    merged_key_topics: list[str] = []
+
+    total = len(chunks)
+    for i, chunk in enumerate(chunks):
+        update_job_status(
+            str(video_id),
+            "analyzing",
+            progress=45 + int(((i) / max(1, total)) * 4),
+            current_step=f"analyzing_chunk_{i+1}/{total}",
+        )
+
+        chunk_text = _format_transcript_with_timestamps(chunk)
+        if not chunk_text.strip():
+            continue
+
+        try:
+            chunk_result = _analyze_with_gemini(
+                chunk_text,
+                language,
+                min_duration=min_duration,
+                max_duration=max_duration,
+            )
+        except Exception as e:
+            logger.warning(
+                "Falha no chunk Gemini %s/%s para video_id=%s: %s",
+                i + 1,
+                total,
+                video_id,
+                e,
+            )
+            continue
+
+        if not merged_title:
+            t = (chunk_result or {}).get("title")
+            if isinstance(t, str) and t.strip():
+                merged_title = t.strip()
+        if not merged_description:
+            d = (chunk_result or {}).get("description")
+            if isinstance(d, str) and d.strip():
+                merged_description = d.strip()
+        if not merged_overall_tone:
+            ot = (chunk_result or {}).get("overall_tone")
+            if isinstance(ot, str) and ot.strip():
+                merged_overall_tone = ot.strip()
+
+        kt = (chunk_result or {}).get("key_topics") or []
+        if isinstance(kt, list):
+            for item in kt:
+                if isinstance(item, str) and item.strip() and item.strip() not in merged_key_topics:
+                    merged_key_topics.append(item.strip())
+
+        cand = (chunk_result or {}).get("candidates") or []
+        if isinstance(cand, list):
+            merged_candidates.extend([c for c in cand if isinstance(c, dict)])
+
+    if not merged_candidates:
+        raise RuntimeError("Falha ao analisar todos os chunks com Gemini (nenhum candidato retornado).")
+
+    return {
+        "title": merged_title or "",
+        "description": merged_description or "",
+        "candidates": merged_candidates,
+        "overall_tone": merged_overall_tone or "",
+        "key_topics": merged_key_topics,
+    }
+
+
+def _chunk_segments_by_time(segments: list, chunk_duration_seconds: int) -> list[list]:
+    if not segments or not chunk_duration_seconds or chunk_duration_seconds <= 0:
+        return []
+
+    filtered = []
+    for s in segments:
+        if not isinstance(s, dict):
+            continue
+        if s.get("start") is None or s.get("end") is None:
+            continue
+        filtered.append(s)
+
+    if not filtered:
+        return []
+
+    filtered.sort(key=lambda s: float(s.get("start", 0) or 0))
+
+    chunks: list[list] = []
+    current: list = []
+    chunk_start = float(filtered[0].get("start", 0) or 0)
+
+    for seg in filtered:
+        seg_start = float(seg.get("start", 0) or 0)
+        if seg_start - chunk_start >= float(chunk_duration_seconds):
+            if current:
+                chunks.append(current)
+            current = [seg]
+            chunk_start = seg_start
+        else:
+            current.append(seg)
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
 def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, max_duration: int) -> dict:
-    _configure_gemini()
+    client = _get_gemini_client()
     
     response_schema = {
         "type": "object",
@@ -234,49 +378,45 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
     Formatted Transcript:
     {formatted_text}"""
 
+    model_name = "gemini-2.5-flash-lite"
+    
+    max_output_tokens = int(getattr(settings, "GEMINI_ANALYZE_MAX_OUTPUT_TOKENS", 8192) or 8192)
+    
+    response = client.models.generate_content(
+        model=f'models/{model_name}',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            temperature=0.4,
+            max_output_tokens=max_output_tokens,
+        )
+    )
+
+    raw_text = _get_gemini_response_text(response)
+    logger.info(
+        "Gemini response received: chars=%s",
+        len(raw_text) if isinstance(raw_text, str) else "<non-str>",
+    )
+
     try:
-        # Modelo mais barato possível
-        model_name = "gemini-2.5-flash-lite"
-        
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                temperature=0.4,
-                max_output_tokens=8192,
-            )
+        analysis_data = _safe_load_json_response(raw_text)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Gemini response not valid JSON. preview=%r",
+            (raw_text[:500] if isinstance(raw_text, str) else str(raw_text)[:500]),
         )
-
-        raw_text = _get_gemini_response_text(response)
-        logger.info(
-            "Gemini response received: chars=%s",
-            len(raw_text) if isinstance(raw_text, str) else "<non-str>",
-        )
-
         try:
-            analysis_data = _safe_load_json_response(raw_text)
+            analysis_data = _repair_gemini_json(client, raw_text, response_schema)
         except json.JSONDecodeError:
-            logger.warning(
-                "Gemini response not valid JSON. preview=%r",
+            logger.error(
+                "Gemini JSON repair failed. preview=%r",
                 (raw_text[:500] if isinstance(raw_text, str) else str(raw_text)[:500]),
             )
-            try:
-                analysis_data = _repair_gemini_json(model, raw_text, response_schema)
-            except json.JSONDecodeError:
-                logger.error(
-                    "Gemini JSON repair failed. preview=%r",
-                    (raw_text[:500] if isinstance(raw_text, str) else str(raw_text)[:500]),
-                )
-                raise
+            raise
 
-        logger.info(f"Análise Gemini concluída: {len(analysis_data.get('candidates', []))} clips identificados")
-        return analysis_data
-
-    except Exception as e:
-        logger.error(f"Erro na chamada Gemini: {e}")
-        raise Exception(f"Falha na IA Generativa: {e}")
+    logger.info(f"Análise Gemini concluída: {len(analysis_data.get('candidates', []))} clips identificados")
+    return analysis_data
 
 
 def _safe_load_json_response(text: str) -> dict:
@@ -317,7 +457,7 @@ def _safe_load_json_response(text: str) -> dict:
 
 
 def _get_gemini_response_text(response) -> str:
-    """Best-effort to extract text from google.generativeai response object."""
+    """Best-effort to extract text from gemini response object."""
     t = getattr(response, "text", None)
     if isinstance(t, str) and t.strip():
         return t
@@ -337,7 +477,7 @@ def _get_gemini_response_text(response) -> str:
     return "\n".join(parts).strip()
 
 
-def _repair_gemini_json(model, raw_text: str, response_schema: dict) -> dict:
+def _repair_gemini_json(client, raw_text: str, response_schema: dict) -> dict:
     """Second-pass: ask Gemini to output valid JSON only.
 
     This mitigates cases where the first response includes extra text, is wrapped,
@@ -353,13 +493,14 @@ def _repair_gemini_json(model, raw_text: str, response_schema: dict) -> dict:
         f"{raw_text}"
     )
 
-    repair_response = model.generate_content(
-        repair_prompt,
-        generation_config=genai.types.GenerationConfig(
+    repair_response = client.models.generate_content(
+        model='models/gemini-2.5-flash-lite',
+        contents=repair_prompt,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=response_schema,
             temperature=0.0,
-            max_output_tokens=4096,
+            max_output_tokens=int(getattr(settings, "GEMINI_ANALYZE_REPAIR_MAX_OUTPUT_TOKENS", 4096) or 4096),
         ),
     )
 

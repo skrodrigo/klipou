@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 import uuid
 from clips.services.storage_service import R2StorageService
-from clips.models import Video, Organization
+from clips.models import Video, Organization, OrganizationMember
 from clips.tasks import download_video_task
 
 
@@ -53,16 +53,19 @@ def generate_upload_url(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        # Obter organização do usuário
-        from clips.models import TeamMember
-        team_member = TeamMember.objects.filter(user_id=user.user_id).first()
-        if not team_member:
+        organization = getattr(user, "current_organization", None)
+        if not organization:
+            membership = (
+                OrganizationMember.objects.filter(user_id=user.user_id, is_active=True)
+                .select_related("organization")
+                .first()
+            )
+            organization = membership.organization if membership else None
+        if not organization:
             return Response(
                 {"error": "Usuário não tem organização associada"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        organization = Organization.objects.get(organization_id=team_member.organization_id)
 
         # Obter video_id do request (gerado no frontend)
         video_id = request.data.get("video_id")
@@ -168,15 +171,19 @@ def start_ingestion_from_url(request):
 
         video = Video.objects.get(video_id=video_id, user_id=user.user_id)
 
-        from clips.models import TeamMember
-        team_member = TeamMember.objects.filter(user_id=user.user_id).first()
-        if not team_member:
+        organization = getattr(user, "current_organization", None)
+        if not organization:
+            membership = (
+                OrganizationMember.objects.filter(user_id=user.user_id, is_active=True)
+                .select_related("organization")
+                .first()
+            )
+            organization = membership.organization if membership else None
+        if not organization:
             return Response(
                 {"error": "Usuário não tem organização associada"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        organization = Organization.objects.get(organization_id=team_member.organization_id)
 
         # Garante existência de Job para alimentar SSE e update_job_status no pipeline
         from clips.models import Job
@@ -264,15 +271,19 @@ def ingest_from_url(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from clips.models import TeamMember
-        team_member = TeamMember.objects.filter(user_id=user.user_id).first()
-        if not team_member:
+        organization = getattr(user, "current_organization", None)
+        if not organization:
+            membership = (
+                OrganizationMember.objects.filter(user_id=user.user_id, is_active=True)
+                .select_related("organization")
+                .first()
+            )
+            organization = membership.organization if membership else None
+        if not organization:
             return Response(
                 {"error": "Usuário não tem organização associada"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        organization = Organization.objects.get(organization_id=team_member.organization_id)
 
         # Prévia de metadados SEM download (para exibir na UI antes de iniciar tasks)
         preview = _extract_preview_metadata(source_url)
