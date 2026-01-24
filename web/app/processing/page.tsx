@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { getSession } from "@/infra/auth/auth"
 import { uploadVideo } from "@/infra/videos/upload"
-import { createJob, getJobProgress, getVideoDetails, type CreateJobPayload } from "@/infra/videos/videos"
+import { createJob, getJobProgress, getVideoDetails, getJobStatus, type CreateJobPayload } from "@/infra/videos/videos"
 import { useVideoStore } from "@/lib/store/video-store"
 import { cn } from "@/lib/utils"
 import { AlertSquareIcon, CancelSquareIcon, Loading03Icon, LogoutSquare02Icon, SquareIcon, Tick02Icon } from "@hugeicons/core-free-icons"
@@ -39,6 +39,7 @@ function ProcessingPageInner() {
   const [status, setStatus] = useState<ProcessingStatus>("queued")
   const [jobId, setJobId] = useState<string | null>(initialJobIdParam)
   const sseRef = useRef<EventSource | null>(null)
+  const pollRef = useRef<number | null>(null)
   const [videoId, setVideoId] = useState<string | null>(null)
   const [config, setConfig] = useState<any>(null)
   const [didInitFromStore, setDidInitFromStore] = useState(false)
@@ -142,7 +143,8 @@ function ProcessingPageInner() {
 
     const fetchDetails = async () => {
       try {
-        const details = await getVideoDetails(videoId, user.organization_id || "")
+        const orgId = (user as any)?.organization?.organization_id ?? (user as any)?.organization_id ?? ""
+        const details = await getVideoDetails(videoId, orgId)
         if (details?.title) {
           setVideoTitle(details.title)
           setVideoDetails({ videoTitle: details.title })
@@ -187,9 +189,8 @@ function ProcessingPageInner() {
   }, [videoId, videoFile, isUploadComplete])
 
   useEffect(() => {
-    // If there's already a jobId in the URL (e.g. page refresh), never create a new job.
     const jobIdFromUrl = searchParams.get("jobId")
-    if (jobIdFromUrl) {
+    if (jobIdFromUrl && jobIdFromUrl.trim()) {
       return
     }
 
@@ -223,7 +224,7 @@ function ProcessingPageInner() {
 
         const jobPayload: CreateJobPayload = {
           video_id: videoId,
-          organization_id: user.organization_id || "",
+          organization_id: ((user as any)?.organization?.organization_id ?? (user as any)?.organization_id ?? "") as string,
           user_id: String(user.user_id),
           configuration: {
             minDuration: config.minDuration,
@@ -260,10 +261,62 @@ function ProcessingPageInner() {
     }
 
     let isClosing = false;
+    let isPolling = false;
     let retries = 0;
     const maxRetries = 10;
     const retryDelay = 500;
     const initialDelay = 5000;
+
+    const stopPolling = () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      isPolling = false
+    }
+
+    const startPolling = () => {
+      if (isPolling) return
+      stopPolling()
+      isPolling = true
+      pollRef.current = window.setInterval(async () => {
+        if (isClosing) return
+        try {
+          const job = await getJobStatus(jobId)
+          const nextStatus = (job as any)?.status as ProcessingStatus | undefined
+          const nextProgress = (job as any)?.progress
+          const nextStep = (job as any)?.current_step
+          const nextError = (job as any)?.error_message
+
+          if (nextStatus) {
+            setStatus(nextStatus)
+            setProcessingStatus(nextStatus)
+          }
+          if (typeof nextProgress === "number" && Number.isFinite(nextProgress)) {
+            setProgress(nextProgress)
+            setProcessingProgress(nextProgress)
+          }
+
+          if (nextStatus === "done") {
+            isClosing = true
+            stopPolling()
+            setStatus("done")
+            setProgress(100)
+            setProcessingStatus("done")
+            setProcessingProgress(100)
+            setTimeout(() => router.push("/dashboard/projects"), 1500)
+          }
+          if (nextStatus === "failed") {
+            isClosing = true
+            stopPolling()
+            setStatus("failed")
+            setProcessingStatus("failed")
+            setError(nextError || nextStep || "O processamento falhou. Por favor, tente novamente.")
+          }
+        } catch (e) {
+        }
+      }, 2000)
+    }
 
     const connectToSSE = () => {
       if (isClosing) {
@@ -290,6 +343,25 @@ function ProcessingPageInner() {
       eventSource.onmessage = (event) => {
         try {
           const data: StatusMessage = JSON.parse(event.data);
+
+          if ((data as any)?.error_message === "Job not found" || (data as any)?.error === "Job not found") {
+            try {
+              eventSource.close()
+            } catch (e) {
+            }
+            if (sseRef.current === eventSource) {
+              sseRef.current = null
+            }
+
+            if (retries < maxRetries) {
+              retries++
+              setTimeout(connectToSSE, retryDelay)
+              return
+            }
+
+            startPolling()
+            return
+          }
 
           setStatus(data.status);
           setProgress(data.progress);
@@ -354,6 +426,8 @@ function ProcessingPageInner() {
           if (sseRef.current === eventSource) {
             sseRef.current = null
           }
+
+          startPolling()
         }
       };
     };
@@ -363,6 +437,7 @@ function ProcessingPageInner() {
     return () => {
       isClosing = true;
       clearTimeout(initialTimer);
+      stopPolling()
       if (sseRef.current) {
         try {
           sseRef.current.close()

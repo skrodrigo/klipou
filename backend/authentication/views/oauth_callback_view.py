@@ -1,8 +1,10 @@
 import secrets
+import requests
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -86,11 +88,96 @@ def oauth_callback(request, platform):
             }, status=404)
         
         # Handle OAuth callback
-        social_account = OAuthManager.handle_oauth_callback(user, platform, code, state)
+        if platform == 'facebook':
+            social_account = OAuthManager.handle_oauth_callback(user, platform, code, state)
+
+            # Resolve Instagram Business account (if available) and store metadata.
+            try:
+                debug_token = requests.get(
+                    "https://graph.facebook.com/debug_token",
+                    params={
+                        "input_token": social_account.access_token,
+                        "access_token": f"{settings.FACEBOOK_CLIENT_ID}|{settings.FACEBOOK_CLIENT_SECRET}",
+                    },
+                    timeout=20,
+                )
+                granted_scopes = []
+                if debug_token.ok:
+                    granted_scopes = (debug_token.json().get('data') or {}).get('scopes') or []
+
+                me_accounts = requests.get(
+                    "https://graph.facebook.com/v18.0/me/accounts",
+                    params={
+                        "access_token": social_account.access_token,
+                        "fields": "id,name,access_token,instagram_business_account",
+                    },
+                    timeout=20,
+                )
+                me_accounts.raise_for_status()
+                pages = me_accounts.json().get('data') or []
+
+                selected_page = None
+                for page in pages:
+                    if page.get('instagram_business_account'):
+                        selected_page = page
+                        break
+
+                if selected_page and selected_page.get('instagram_business_account'):
+                    page_access_token = selected_page.get('access_token')
+                    ig_business_id = selected_page['instagram_business_account'].get('id')
+
+                    ig_info = None
+                    if ig_business_id and page_access_token:
+                        ig_resp = requests.get(
+                            f"https://graph.facebook.com/v18.0/{ig_business_id}",
+                            params={
+                                "fields": "id,username,profile_picture_url,name",
+                                "access_token": page_access_token,
+                            },
+                            timeout=20,
+                        )
+                        ig_resp.raise_for_status()
+                        ig_info = ig_resp.json()
+
+                    # Create/update Instagram SocialAccount based on the FB token.
+                    ig_social_account, _ = SocialAccount.objects.update_or_create(
+                        user=user,
+                        platform='instagram',
+                        platform_user_id=str(ig_business_id),
+                        defaults={
+                            'access_token': social_account.access_token,
+                            'refresh_token': None,
+                            'token_expires_at': social_account.token_expires_at,
+                            'platform_username': (ig_info or {}).get('username') or social_account.platform_username,
+                            'platform_display_name': (ig_info or {}).get('name') or social_account.platform_display_name,
+                            'platform_profile_picture': (ig_info or {}).get('profile_picture_url') or social_account.platform_profile_picture,
+                            'permissions': [
+                                {
+                                    'oauth_provider': 'facebook',
+                                    'granted_scopes': granted_scopes,
+                                    'page_id': selected_page.get('id'),
+                                    'page_name': selected_page.get('name'),
+                                    'page_access_token': page_access_token,
+                                    'ig_business_account_id': ig_business_id,
+                                }
+                            ],
+                            'is_connected': True,
+                        },
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to resolve Instagram account from Facebook OAuth: {str(e)}")
+        else:
+            social_account = OAuthManager.handle_oauth_callback(user, platform, code, state)
         
         # Redirect to frontend with success
-        frontend_url = f"{request.scheme}://{request.get_host()}"
-        redirect_url = f"{frontend_url}/dashboard/accounts?platform={platform}&connected=true&account={social_account.platform_username}"
+        redirect_platform = 'instagram' if platform == 'facebook' else social_account.platform
+        redirect_account = social_account.platform_username
+        if platform == 'facebook':
+            ig_acc = SocialAccount.objects.filter(user=user, platform='instagram', is_connected=True).order_by('-updated_at').first()
+            if ig_acc:
+                redirect_account = ig_acc.platform_username
+        redirect_url = f"{settings.FRONTEND_URL}/dashboard/accounts?platform={redirect_platform}&connected=true&account={redirect_account}"
         
         return JsonResponse({
             'success': True,

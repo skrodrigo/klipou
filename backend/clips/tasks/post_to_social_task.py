@@ -1,4 +1,6 @@
 import logging
+import json
+import requests
 from celery import shared_task
 
 from ..models import Clip, Schedule, Integration
@@ -99,9 +101,42 @@ def _post_to_tiktok(clip_url: str, clip_title: str, integration: "Integration") 
 
 def _post_to_instagram(clip_url: str, clip_title: str, integration: "Integration") -> dict:
     """Publica em Instagram via API."""
+    meta = _get_meta_from_integration(integration)
+    ig_business_account_id = meta.get('ig_business_account_id')
+    page_access_token = meta.get('page_access_token')
+    if not ig_business_account_id or not page_access_token:
+        raise Exception("Instagram integration missing ig_business_account_id/page_access_token")
+
+    create_container = requests.post(
+        f"https://graph.facebook.com/v18.0/{ig_business_account_id}/media",
+        data={
+            "media_type": "REELS",
+            "video_url": clip_url,
+            "caption": clip_title,
+            "access_token": page_access_token,
+        },
+        timeout=60,
+    )
+    create_container.raise_for_status()
+    creation_id = create_container.json().get('id')
+    if not creation_id:
+        raise Exception("Failed to create Instagram media container")
+
+    publish = requests.post(
+        f"https://graph.facebook.com/v18.0/{ig_business_account_id}/media_publish",
+        data={
+            "creation_id": creation_id,
+            "access_token": page_access_token,
+        },
+        timeout=60,
+    )
+    publish.raise_for_status()
+    media_id = publish.json().get('id')
+
     return {
-        "post_url": f"https://instagram.com/p/mock",
+        "post_url": f"https://instagram.com/p/{media_id}" if media_id else None,
         "platform": "instagram",
+        "platform_post_id": media_id,
     }
 
 
@@ -115,10 +150,47 @@ def _post_to_youtube(clip_url: str, clip_title: str, integration: "Integration")
 
 def _post_to_facebook(clip_url: str, clip_title: str, integration: "Integration") -> dict:
     """Publica em Facebook via API."""
+    meta = _get_meta_from_integration(integration)
+    page_id = meta.get('page_id')
+    page_access_token = meta.get('page_access_token')
+    if not page_id or not page_access_token:
+        raise Exception("Facebook integration missing page_id/page_access_token")
+
+    resp = requests.post(
+        f"https://graph.facebook.com/v18.0/{page_id}/videos",
+        data={
+            "file_url": clip_url,
+            "description": clip_title,
+            "access_token": page_access_token,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    video_id = resp.json().get('id')
+
     return {
-        "post_url": f"https://facebook.com/mock",
+        "post_url": f"https://facebook.com/{video_id}" if video_id else None,
         "platform": "facebook",
+        "platform_post_id": video_id,
     }
+
+
+def _get_meta_from_integration(integration: "Integration") -> dict:
+
+    raw = integration.token_encrypted or ""
+    raw = raw.strip()
+    if not raw:
+        return {}
+
+    if raw.startswith('{'):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+
+    return {"page_access_token": raw, "access_token": raw}
 
 
 def _post_to_linkedin(clip_url: str, clip_title: str, integration: "Integration") -> dict:

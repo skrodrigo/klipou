@@ -165,7 +165,6 @@ export function PublishSheet({
           </Button>
           <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
             <SchedulePicker value={scheduleAt} onChange={onScheduleAtChange} />
-            <Button variant="secondary">Agendar</Button>
             <Button className="bg-primary text-white" onClick={() => onOpenChange(false)}>
               Publicar
             </Button>

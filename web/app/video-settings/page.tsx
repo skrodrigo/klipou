@@ -81,7 +81,7 @@ export default function VideoSettingsPage() {
       if (videoId) {
         const started = await startIngestionFromUrl(videoId)
         router.push(
-          `/processing?videoId=${started.video_id}&config=${encodeURIComponent(JSON.stringify(config))}`
+          `/processing?videoId=${started.video_id}&jobId=${started.job_id ?? ""}&config=${encodeURIComponent(JSON.stringify(config))}`
         )
         return
       }

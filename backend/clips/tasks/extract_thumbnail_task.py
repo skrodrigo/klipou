@@ -4,12 +4,12 @@ import os
 import glob
 import subprocess
 from celery import shared_task
+from django.conf import settings
 from ..models import Video, Organization
 from ..services.storage_service import R2StorageService
 from .job_utils import get_plan_tier, update_job_status
 
 logger = logging.getLogger(__name__)
-
 
 @shared_task(bind=True, max_retries=3, acks_late=False)
 def extract_thumbnail_task(self, video_id: str):
@@ -59,7 +59,9 @@ def extract_thumbnail_task(self, video_id: str):
         if total_frames <= 0:
             raise Exception("Vídeo não possui frames ou está corrompido")
         
-        target_frame = int(total_frames * 0.25)
+        ratio = float(getattr(settings, "VIDEO_THUMBNAIL_FRAME_RATIO", 0.25) or 0.25)
+        ratio = max(0.0, min(ratio, 1.0))
+        target_frame = int(total_frames * ratio)
         cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
         
         ret, frame = cap.read()

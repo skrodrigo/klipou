@@ -162,7 +162,24 @@ def start_ingestion_from_url(request):
     try:
         user = request.user
         video_id = request.data.get('video_id')
-        configuration = request.data.get("configuration") or {}
+        configuration_in = request.data.get("configuration") or {}
+        configuration = {}
+        if isinstance(configuration_in, dict):
+            min_d = configuration_in.get("minDuration")
+            max_d = configuration_in.get("maxDuration")
+            auto_schedule = configuration_in.get("autoSchedule")
+
+            if min_d is not None:
+                configuration["minDuration"] = int(min_d)
+                configuration["min_clip_duration"] = int(min_d)
+
+            if max_d is not None:
+                configuration["maxDuration"] = int(max_d)
+                configuration["max_clip_duration"] = int(max_d)
+
+            if auto_schedule is not None:
+                configuration["autoSchedule"] = bool(auto_schedule)
+                configuration["auto_schedule"] = bool(auto_schedule)
         if not video_id:
             return Response(
                 {"error": "video_id é obrigatório"},

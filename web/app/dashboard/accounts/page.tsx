@@ -21,10 +21,7 @@ interface SocialAccount {
 const PLATFORMS = [
   { id: "tiktok", name: "TikTok", icon: "/social/tiktok.svg", desc: "Feed ou Inbox" },
   { id: "instagram", name: "Instagram", icon: "/social/instagram.svg", desc: "Feed" },
-  { id: "youtube", name: "YouTube", icon: "/social/shorts.svg", desc: "Feed" },
-  { id: "facebook", name: "Facebook", icon: "/social/facebook.svg", desc: "Feed" },
-  { id: "linkedin", name: "LinkedIn", icon: "/social/linkedin.svg", desc: "Feed" },
-  { id: "twitter", name: "X", icon: "/social/x.svg", desc: "Feed" },
+  { id: "shorts", name: "YouTube Shorts", icon: "/social/shorts.svg", desc: "Feed" },
 ]
 
 export default function AccountsPage() {

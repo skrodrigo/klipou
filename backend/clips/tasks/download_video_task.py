@@ -3,6 +3,7 @@ import os
 import subprocess
 import json
 import shutil
+import time
 from celery import shared_task
 from django.conf import settings
 
@@ -18,6 +19,7 @@ def download_video_task(self, video_id: str) -> dict:
     video = None
     temp_dir = None
     lock_path = None
+    lock_owner_pid = None
     
     try:
         video = Video.objects.get(video_id=video_id)
@@ -35,9 +37,19 @@ def download_video_task(self, video_id: str) -> dict:
         temp_dir = output_dir
 
         lock_path = os.path.join(output_dir, ".download.lock")
+        lock_owner_pid = int(os.getpid())
+        stale_seconds = int(getattr(settings, "DOWNLOAD_LOCK_STALE_SECONDS", 900) or 900)
         try:
+            if os.path.exists(lock_path):
+                try:
+                    mtime = float(os.path.getmtime(lock_path) or 0)
+                    if (time.time() - mtime) > float(stale_seconds):
+                        os.remove(lock_path)
+                except Exception:
+                    pass
+
             lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(lock_fd, str(os.getpid()).encode("utf-8"))
+            os.write(lock_fd, str(lock_owner_pid).encode("utf-8"))
             os.close(lock_fd)
         except FileExistsError:
             logger.info(f"Download já em andamento para video_id={video.video_id}. Ignorando.")
@@ -153,7 +165,8 @@ def download_video_task(self, video_id: str) -> dict:
         if video:
             video.status = "failed"
             video.current_step = "downloading"
-            video.error_code = _get_error_code(str(e))
+            error_code = _get_error_code(str(e))
+            video.error_code = error_code
             video.error_message = str(e)
             video.retry_count += 1
             video.save()
@@ -165,6 +178,18 @@ def download_video_task(self, video_id: str) -> dict:
                 current_step="downloading",
             )
 
+            permanent_codes = {
+                "VIDEO_PRIVATE",
+                "VIDEO_NOT_FOUND",
+                "GEO_BLOCKED",
+                "AUTH_REQUIRED",
+                "FORBIDDEN",
+                "TOO_MANY_REQUESTS",
+            }
+
+            if error_code in permanent_codes:
+                return {"error": str(e), "status": "failed", "error_code": error_code}
+
             if self.request.retries < self.max_retries:
                 countdown = 2 ** self.request.retries
                 logger.warning(f"Retentando download em {countdown}s (tentativa {self.request.retries + 1}/{self.max_retries})")
@@ -173,18 +198,20 @@ def download_video_task(self, video_id: str) -> dict:
         if temp_dir:
             _cleanup_temp_download_files(temp_dir)
 
-        if lock_path and os.path.exists(lock_path):
-            try:
-                os.remove(lock_path)
-            except Exception:
-                pass
-
         return {"error": str(e), "status": "failed"}
 
     finally:
         if lock_path and os.path.exists(lock_path):
             try:
-                os.remove(lock_path)
+                content = ""
+                try:
+                    with open(lock_path, "r", encoding="utf-8") as f:
+                        content = (f.read() or "").strip()
+                except Exception:
+                    content = ""
+
+                if str(lock_owner_pid or "") and content == str(lock_owner_pid):
+                    os.remove(lock_path)
             except Exception:
                 pass
 
@@ -205,9 +232,14 @@ def _download_from_source_url(source_url: str, output_dir: str) -> dict:
     output_template = os.path.join(tmp_subdir, "download.%(ext)s")
 
     proxy_url = os.getenv("PROXY_URL")
+    user_agent = os.getenv("YTDLP_USER_AGENT")
+    referer = os.getenv("YTDLP_REFERER")
 
     concurrent_frags = int(getattr(settings, "YTDLP_CONCURRENT_FRAGMENT_DOWNLOADS", 4) or 4)
     http_chunk_size = int(getattr(settings, "YTDLP_HTTP_CHUNK_SIZE", 10 * 1024 * 1024) or (10 * 1024 * 1024))
+    sleep_interval = float(getattr(settings, "YTDLP_SLEEP_INTERVAL", 0) or 0)
+    max_sleep_interval = float(getattr(settings, "YTDLP_MAX_SLEEP_INTERVAL", 0) or 0)
+    extractor_retries = int(getattr(settings, "YTDLP_EXTRACTOR_RETRIES", 3) or 3)
 
     max_height = int(getattr(settings, "YTDLP_MAX_HEIGHT", 720) or 720)
     # Prefer H.264 (avc1) + m4a, but cap resolution for speed.
@@ -223,8 +255,8 @@ def _download_from_source_url(source_url: str, output_dir: str) -> dict:
         "merge_output_format": "mp4",
         "outtmpl": output_template,
         "noplaylist": True,
-        "retries": 3,
-        "fragment_retries": 3,
+        "retries": extractor_retries,
+        "fragment_retries": extractor_retries,
         "socket_timeout": 30,
         "concurrent_fragment_downloads": concurrent_frags,
         "http_chunk_size": http_chunk_size,
@@ -238,6 +270,17 @@ def _download_from_source_url(source_url: str, output_dir: str) -> dict:
 
     if proxy_url:
         ydl_opts["proxy"] = proxy_url
+
+    if user_agent:
+        ydl_opts["user_agent"] = user_agent
+
+    if referer:
+        ydl_opts["referer"] = referer
+
+    if sleep_interval and sleep_interval > 0:
+        ydl_opts["sleep_interval"] = sleep_interval
+        if max_sleep_interval and max_sleep_interval > 0:
+            ydl_opts["max_sleep_interval"] = max_sleep_interval
 
     try:
         logger.info(f"Iniciando download via yt-dlp: {source_url}")
@@ -278,6 +321,10 @@ def _find_downloaded_media_file(download_dir: str) -> str | None:
 def _map_yt_dlp_error_to_message(error_msg: str, source_url: str) -> str:
     msg = (error_msg or "").lower()
 
+    if "403" in msg or "forbidden" in msg:
+        return "YouTube bloqueou temporariamente este download (403). Tente novamente em alguns minutos."
+    if "429" in msg or "too many requests" in msg:
+        return "Muitas tentativas seguidas (429). Aguarde alguns minutos e tente novamente."
     if "private" in msg or "login" in msg or "sign in" in msg:
         return f"Vídeo privado, requer login, ou não acessível: {source_url}"
     if "not available" in msg or "404" in msg or "removed" in msg:
@@ -286,6 +333,8 @@ def _map_yt_dlp_error_to_message(error_msg: str, source_url: str) -> str:
         return "Vídeo bloqueado por localização geográfica"
     if "proxy" in msg:
         return "Erro relacionado a proxy"
+    if "timeout" in msg or "timed out" in msg:
+        return "Timeout ao baixar o vídeo. Verifique sua conexão e tente novamente."
     return f"Erro ao baixar vídeo via yt-dlp: {error_msg}"
 
 

@@ -25,6 +25,11 @@ export const useOAuth = (): UseOAuthReturn => {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
+  const mapPlatformToOAuthProvider = (platform: string) => {
+    if (platform === 'instagram') return 'facebook'
+    return platform
+  }
+
   const getAuthToken = () => {
     return localStorage.getItem('access_token')
   }
@@ -44,8 +49,10 @@ export const useOAuth = (): UseOAuthReturn => {
         throw new Error('User ID not found')
       }
 
+      const oauthProvider = mapPlatformToOAuthProvider(platform)
+
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/auth/oauth/authorize/${platform}/`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/auth/oauth/authorize/${oauthProvider}/`,
         {
           method: 'GET',
           headers: {
@@ -62,8 +69,8 @@ export const useOAuth = (): UseOAuthReturn => {
       }
 
       // Store state for verification after callback
-      sessionStorage.setItem(`oauth_state_${platform}`, data.state)
-      sessionStorage.setItem(`oauth_user_id_${platform}`, userId)
+      sessionStorage.setItem(`oauth_state_${oauthProvider}`, data.state)
+      sessionStorage.setItem(`oauth_user_id_${oauthProvider}`, userId)
 
       // Redirect to OAuth provider with user_id parameter
       const authUrl = new URL(data.authorization_url)

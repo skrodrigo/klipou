@@ -178,6 +178,12 @@ export function ClipCard({
     return `${videoHeight}p`
   })()
 
+  const engagementScore10 = (() => {
+    const s = (clip as any).engagement_score
+    if (typeof s !== "number" || !Number.isFinite(s)) return null
+    return s / 10
+  })()
+
   return (
     <div id={`clip-${clip.clip_id}`} className="flex flex-col lg:flex-row gap-8 items-start group">
       {/* Left Column: Vertical Video Player */}
@@ -283,10 +289,10 @@ export function ClipCard({
         <div className="flex items-center flex-wrap gap-2">
           <div className="flex items-baseline gap-1">
             <span className="text-4xl font-bold text-white tracking-tighter">
-              {clip.engagement_score !== undefined && clip.engagement_score !== null
-                ? clip.engagement_score % 1 === 0
-                  ? clip.engagement_score.toString()
-                  : clip.engagement_score.toFixed(1)
+              {engagementScore10 !== null
+                ? engagementScore10 % 1 === 0
+                  ? engagementScore10.toString()
+                  : engagementScore10.toFixed(1)
                 : "N/A"}
             </span>
             <span className="text-sm font-medium text-zinc-500">/10</span>

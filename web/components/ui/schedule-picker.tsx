@@ -111,13 +111,12 @@ function SchedulePicker({
           type="button"
           disabled={disabled}
           className={cn(
-            "bg-input/30 border-input/30 text-muted-foreground hover:text-foreground inline-flex h-12 items-center justify-between gap-2 rounded-lg border px-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+            "bg-input/30 border-input/30 text-muted-foreground hover:text-foreground inline-flex h-10 items-center justify-between gap-2 rounded-lg border px-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
             displayValue && "text-foreground",
             className
           )}
         >
           <span className={cn(!displayValue && "text-muted-foreground")}>{displayValue || placeholder}</span>
-          <span className="text-muted-foreground text-xs">▼</span>
         </button>
       </PopoverTrigger>
 

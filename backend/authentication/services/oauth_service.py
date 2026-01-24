@@ -102,44 +102,28 @@ class InstagramOAuth(OAuthProvider):
         self.user_info_url = "https://graph.instagram.com/v18.0/me"
     
     def get_authorization_url(self, state: str) -> str:
-        params = {
-            "client_id": self.client_id,
-            "redirect_uri": self.redirect_uri,
-            "scope": "user_profile,user_media",
-            "response_type": "code",
-            "state": state,
-        }
-        return f"{self.auth_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+        raise NotImplementedError(
+            "Instagram publishing is not supported via Instagram Basic Display OAuth. "
+            "Use Facebook Login (platform='facebook') with Instagram Graph permissions instead."
+        )
     
     def exchange_code_for_token(self, code: str) -> dict:
-        data = {
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "grant_type": "authorization_code",
-            "redirect_uri": self.redirect_uri,
-            "code": code,
-        }
-        response = requests.post(self.token_url, data=data)
-        response.raise_for_status()
-        return response.json()
+        raise NotImplementedError(
+            "Instagram publishing is not supported via Instagram Basic Display OAuth. "
+            "Use Facebook Login (platform='facebook') with Instagram Graph permissions instead."
+        )
     
     def get_user_info(self, access_token: str) -> dict:
-        params = {
-            "fields": "id,username,name,profile_picture_url",
-            "access_token": access_token,
-        }
-        response = requests.get(self.user_info_url, params=params)
-        response.raise_for_status()
-        return response.json()
+        raise NotImplementedError(
+            "Instagram publishing is not supported via Instagram Basic Display OAuth. "
+            "Use Facebook Login (platform='facebook') with Instagram Graph permissions instead."
+        )
     
     def refresh_access_token(self, refresh_token: str) -> dict:
-        data = {
-            "grant_type": "refresh_access_token",
-            "access_token": refresh_token,
-        }
-        response = requests.post(self.token_url, data=data)
-        response.raise_for_status()
-        return response.json()
+        raise NotImplementedError(
+            "Instagram publishing is not supported via Instagram Basic Display OAuth. "
+            "Use Facebook Login (platform='facebook') with Instagram Graph permissions instead."
+        )
 
 
 class YouTubeOAuth(OAuthProvider):
@@ -219,8 +203,9 @@ class FacebookOAuth(OAuthProvider):
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
-            "scope": "pages_manage_posts,pages_read_user_content,pages_manage_metadata",
+            "scope": "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,pages_manage_posts",
             "state": state,
+            "response_type": "code",
         }
         return f"{self.auth_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
     

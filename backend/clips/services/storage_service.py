@@ -142,6 +142,15 @@ class R2StorageService:
         key = f"transcripts/{organization_id}/{video_id}/transcript.json"
         return self._upload_file(file_path, key)
 
+    def upload_transcript_srt(
+        self,
+        file_path: str,
+        organization_id: str,
+        video_id: str,
+    ) -> str:
+        key = f"transcripts/{organization_id}/{video_id}/transcript.srt"
+        return self._upload_file(file_path, key)
+
     def upload_caption(
         self,
         file_path: str,

@@ -15,12 +15,12 @@ export default function RegisterPage() {
           priority
           quality={100} />
         <AuthRegisterForm />
-        <span className="mt-4 text-foreground font-light">Tem conta? <Link href='/auth/login' aria-label="Login" className="underline text-muted-foreground">Login</Link></span>
+        <div className="text-center text-xs font-light text-foreground mt-8">
+          Ao continuar, você concorda com nossos <Link href='/terms' target="_blank" aria-label="Termos de Uso" about="Termos de Uso" className="underline text-muted-foreground">Termos de Uso</Link> e <Link href='/privacy' target="_blank" aria-label="Política de Privacidade" about="Política de Privacidade" className="underline text-muted-foreground">Política de Privacidade</Link>
+        </div>
       </div>
 
-      <div className="mt-auto pb-2 text-center text-xs font-light text-foreground">
-        Ao continuar, você concorda com nossos <Link href='/terms' target="_blank" aria-label="Termos de Uso" about="Termos de Uso" className="underline text-muted-foreground">Termos de Uso</Link> e <Link href='/privacy' target="_blank" aria-label="Política de Privacidade" about="Política de Privacidade" className="underline text-muted-foreground">Política de Privacidade</Link>
-      </div>
+
     </main>
   );
 }

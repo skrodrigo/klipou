@@ -7,6 +7,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.utils import timezone
 import uuid
+import json
+import requests
 
 from ..models import Integration, Organization
 
@@ -161,7 +163,10 @@ def oauth_callback(request):
             )
 
         # Troca code por token
-        token_response = _exchange_code_for_token(platform, code)
+        if platform == 'instagram':
+            token_response = _exchange_code_for_token('facebook', code)
+        else:
+            token_response = _exchange_code_for_token(platform, code)
 
         if not token_response.get("access_token"):
             return Response(
@@ -170,7 +175,44 @@ def oauth_callback(request):
             )
 
         # Obtém informações da conta
-        account_info = _get_account_info(platform, token_response["access_token"])
+        if platform == 'instagram':
+            account_info = _get_account_info('facebook', token_response["access_token"])
+
+            # Resolve page + IG business account for publishing
+            pages_resp = requests.get(
+                "https://graph.facebook.com/v18.0/me/accounts",
+                params={
+                    "access_token": token_response["access_token"],
+                    "fields": "id,name,access_token,instagram_business_account",
+                },
+                timeout=20,
+            )
+            pages_resp.raise_for_status()
+            pages = pages_resp.json().get('data') or []
+            selected_page = None
+            for page in pages:
+                if page.get('instagram_business_account'):
+                    selected_page = page
+                    break
+
+            if not selected_page:
+                raise Exception("No Facebook Page with connected Instagram Business account found")
+
+            page_id = selected_page.get('id')
+            page_name = selected_page.get('name')
+            page_access_token = selected_page.get('access_token')
+            ig_business_account_id = (selected_page.get('instagram_business_account') or {}).get('id')
+
+            token_payload = {
+                "access_token": token_response["access_token"],
+                "page_id": page_id,
+                "page_name": page_name,
+                "page_access_token": page_access_token,
+                "ig_business_account_id": ig_business_account_id,
+            }
+        else:
+            account_info = _get_account_info(platform, token_response["access_token"])
+            token_payload = {"access_token": token_response["access_token"]}
 
         # Cria ou atualiza integração
         integration, created = Integration.objects.update_or_create(
@@ -178,10 +220,22 @@ def oauth_callback(request):
             platform=platform,
             account_name=account_info.get("account_name"),
             defaults={
-                "token_encrypted": token_response["access_token"],  # TODO: Criptografar
+                "token_encrypted": json.dumps(token_payload),  # TODO: Criptografar
                 "is_active": True,
             },
         )
+
+        # If Instagram, also upsert Facebook integration (same token payload)
+        if platform == 'instagram':
+            Integration.objects.update_or_create(
+                organization_id=organization_id,
+                platform='facebook',
+                account_name=account_info.get("account_name"),
+                defaults={
+                    "token_encrypted": json.dumps(token_payload),  # TODO: Criptografar
+                    "is_active": True,
+                },
+            )
 
         # Remove state token do cache
         cache.delete(f"oauth_state:{state}")
@@ -258,11 +312,15 @@ def _get_oauth_url(platform: str, state: str) -> str:
     """Gera URL OAuth para a plataforma."""
     from django.conf import settings
 
+    # Instagram publishing uses Facebook Login (Graph API)
+    if platform == "instagram":
+        platform = "facebook"
+
     oauth_urls = {
         "tiktok": f"https://www.tiktok.com/oauth/authorize?client_id={settings.TIKTOK_CLIENT_ID}&redirect_uri={settings.TIKTOK_REDIRECT_URI}&response_type=code&scope=user.info.basic&state={state}",
-        "instagram": f"https://api.instagram.com/oauth/authorize?client_id={settings.INSTAGRAM_CLIENT_ID}&redirect_uri={settings.INSTAGRAM_REDIRECT_URI}&scope=user_profile,user_media&response_type=code&state={state}",
+        "instagram": "",
         "youtube": f"https://accounts.google.com/o/oauth2/v2/auth?client_id={settings.YOUTUBE_CLIENT_ID}&redirect_uri={settings.YOUTUBE_REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/youtube.upload&state={state}",
-        "facebook": f"https://www.facebook.com/v18.0/dialog/oauth?client_id={settings.FACEBOOK_CLIENT_ID}&redirect_uri={settings.FACEBOOK_REDIRECT_URI}&scope=pages_manage_posts&state={state}",
+        "facebook": f"https://www.facebook.com/v18.0/dialog/oauth?client_id={settings.FACEBOOK_CLIENT_ID}&redirect_uri={settings.BACKEND_URL}/api/integrations/oauth-callback/&response_type=code&scope=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,pages_manage_posts&state={state}",
         "linkedin": f"https://www.linkedin.com/oauth/v2/authorization?client_id={settings.LINKEDIN_CLIENT_ID}&redirect_uri={settings.LINKEDIN_REDIRECT_URI}&response_type=code&scope=w_member_social&state={state}",
         "twitter": f"https://twitter.com/i/oauth2/authorize?client_id={settings.TWITTER_CLIENT_ID}&redirect_uri={settings.TWITTER_REDIRECT_URI}&response_type=code&scope=tweet.write%20tweet.read%20users.read&state={state}",
     }
@@ -272,12 +330,38 @@ def _get_oauth_url(platform: str, state: str) -> str:
 
 def _exchange_code_for_token(platform: str, code: str) -> dict:
     """Troca authorization code por access token."""
+    from django.conf import settings
+
+    if platform == "facebook":
+        resp = requests.get(
+            "https://graph.facebook.com/v18.0/oauth/access_token",
+            params={
+                "client_id": settings.FACEBOOK_CLIENT_ID,
+                "client_secret": settings.FACEBOOK_CLIENT_SECRET,
+                "redirect_uri": f"{settings.BACKEND_URL}/api/integrations/oauth-callback/",
+                "code": code,
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # TODO: Implementar para cada plataforma
     return {"access_token": code}  # Placeholder
 
 
 def _get_account_info(platform: str, access_token: str) -> dict:
     """Obtém informações da conta."""
+    if platform == "facebook":
+        me = requests.get(
+            "https://graph.facebook.com/v18.0/me",
+            params={"fields": "id,name", "access_token": access_token},
+            timeout=20,
+        )
+        me.raise_for_status()
+        data = me.json()
+        return {"account_name": data.get("name") or data.get("id")}
+
     # TODO: Implementar para cada plataforma
     return {"account_name": "account"}  # Placeholder
 
