@@ -1,8 +1,10 @@
 import json
 import logging
 import re
+import hashlib
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from google import genai
 from google.genai import types
 
@@ -14,13 +16,136 @@ logger = logging.getLogger(__name__)
 _gemini_client = None
 
 
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client:
+        return _gemini_client
+
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+
+    _gemini_client = genai.Client(api_key=api_key)
+    return _gemini_client
+
+
+def _transcript_hash(transcript: Transcript) -> str:
+    segments = transcript.segments or []
+    full_text = transcript.full_text or ""
+
+    h = hashlib.sha256()
+    h.update(str(transcript.video_id).encode("utf-8"))
+    h.update(b"\n")
+    h.update(str(transcript.language or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update(str(len(segments)).encode("utf-8"))
+    h.update(b"\n")
+    h.update(full_text.encode("utf-8", errors="ignore"))
+    return h.hexdigest()
+
+
+def _should_skip_gemini_analysis(transcript: Transcript, cfg: dict) -> bool:
+    analysis_data = transcript.analysis_data or {}
+    meta = analysis_data.get("meta") if isinstance(analysis_data, dict) else None
+    if not isinstance(meta, dict):
+        return False
+
+    if meta.get("transcript_hash") != _transcript_hash(transcript):
+        return False
+
+    # If you change prompt semantics/config, bump this.
+    if meta.get("analysis_version") != 2:
+        return False
+
+    # If duration bounds/config changed, re-run.
+    if meta.get("config") != cfg:
+        return False
+
+    candidates = analysis_data.get("candidates")
+    return isinstance(candidates, list) and len(candidates) > 0
+
+
+def _format_transcript_with_timestamps(segments: list) -> str:
+    if not segments:
+        return ""
+
+    buffer = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        start = seg.get("start", 0)
+        end = seg.get("end", 0)
+        text = (seg.get("text") or "").strip()
+        try:
+            buffer.append(f"[{float(start):.1f}-{float(end):.1f}] {text}")
+        except Exception:
+            buffer.append(f"[{start}-{end}] {text}")
+
+    return "\n".join(buffer)
+
+
+def _clean_number(num):
+    """Converte 10.0 para 10 (int), mas mantém 5.8 (float)."""
+    try:
+        f_num = float(num)
+        if f_num.is_integer():
+            return int(f_num)
+        return f_num
+    except Exception:
+        return num
+
+
+def _chunk_segments_by_time(segments: list, chunk_seconds: int) -> list[list[dict]]:
+    if not segments or not chunk_seconds or chunk_seconds <= 0:
+        return []
+
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    chunk_start: float | None = None
+
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+
+        start = seg.get("start")
+        end = seg.get("end")
+        try:
+            start_f = float(start) if start is not None else None
+        except Exception:
+            start_f = None
+        try:
+            end_f = float(end) if end is not None else None
+        except Exception:
+            end_f = None
+
+        if start_f is None:
+            # Can't chunk reliably without timestamps; fall back to a single chunk.
+            return [s for s in [segments] if s]
+
+        if chunk_start is None:
+            chunk_start = start_f
+
+        boundary = end_f if end_f is not None else start_f
+        if boundary - chunk_start > float(chunk_seconds) and current:
+            chunks.append(current)
+            current = []
+            chunk_start = start_f
+
+        current.append(seg)
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
 @shared_task(bind=True, max_retries=3)
 def analyze_semantic_task(self, video_id: str) -> dict:
     video = None
     try:
         video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
-        
+
         video.status = "analyzing"
         video.current_step = "analyzing"
         video.save()
@@ -34,14 +159,57 @@ def analyze_semantic_task(self, video_id: str) -> dict:
         language = transcript.language
 
         min_d, max_d = _get_duration_bounds(video_id=str(video.video_id))
-        analysis_result = _analyze_transcript_with_gemini(
-            segments,
-            language,
-            min_duration=min_d,
-            max_duration=max_d,
-            video_duration_s=float(video.duration or 0) if video else 0,
-            video_id=str(video.video_id),
-        )
+
+        # Job-level preferences (optional)
+        max_clips_desired = int(getattr(settings, "MAX_CLIPS_DESIRED", 25) or 25)
+        try:
+            from ..models import Job
+            job = Job.objects.filter(video_id=str(video.video_id)).order_by("-created_at").first()
+            cfg = (job.configuration if job else None) or {}
+            max_clips_desired = int(cfg.get("max_clips_desired") or cfg.get("maxClips") or max_clips_desired)
+        except Exception:
+            cfg = {}
+
+        # Clamp hardcap
+        max_clips_desired = int(max(3, min(max_clips_desired, 25)))
+
+        analyze_cfg = {
+            "min_duration": int(min_d),
+            "max_duration": int(max_d),
+            "max_clips_desired": int(max_clips_desired),
+        }
+
+        if _should_skip_gemini_analysis(transcript, analyze_cfg):
+            analysis_result = transcript.analysis_data or {}
+            logger.info(
+                "[analyze] cache hit video_id=%s transcript_hash=%s",
+                str(video.video_id),
+                (analysis_result.get("meta") or {}).get("transcript_hash"),
+            )
+        else:
+            analysis_result = _analyze_transcript_with_gemini(
+                segments,
+                language,
+                min_duration=min_d,
+                max_duration=max_d,
+                video_duration_s=float(video.duration or 0) if video else 0,
+                video_id=str(video.video_id),
+                organization_id=str(org.organization_id),
+                max_clips_desired=max_clips_desired,
+            )
+
+        if isinstance(analysis_result, dict):
+            existing_meta = analysis_result.get("meta")
+            if not isinstance(existing_meta, dict):
+                existing_meta = {}
+
+            # Do not drop meta produced by chunk merge (e.g. fillers_dropped).
+            analysis_result["meta"] = {
+                **existing_meta,
+                "analysis_version": 2,
+                "transcript_hash": _transcript_hash(transcript),
+                "config": analyze_cfg,
+            }
 
         if "candidates" in analysis_result:
             for c in analysis_result["candidates"]:
@@ -56,7 +224,7 @@ def analyze_semantic_task(self, video_id: str) -> dict:
         video.status = "embedding"
         video.current_step = "embedding"
         video.save()
-        
+
         update_job_status(str(video.video_id), "embedding", progress=50, current_step="embedding")
 
         from .embed_classify_task import embed_classify_task
@@ -81,6 +249,8 @@ def analyze_semantic_task(self, video_id: str) -> dict:
             video.retry_count += 1
             video.save()
 
+            update_job_status(str(video.video_id), "failed", progress=100, current_step="analyzing")
+
             msg = str(e)
             non_retryable = (
                 "Could not extract valid JSON" in msg
@@ -94,44 +264,6 @@ def analyze_semantic_task(self, video_id: str) -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def _get_gemini_client():
-    global _gemini_client
-    if _gemini_client:
-        return _gemini_client
-
-    api_key = getattr(settings, "GEMINI_API_KEY", None)
-    if not api_key:
-        raise Exception("GEMINI_API_KEY não configurada")
-
-    _gemini_client = genai.Client(api_key=api_key)
-    return _gemini_client
-
-
-def _format_transcript_with_timestamps(segments: list) -> str:
-    if not segments:
-        return ""
-    
-    buffer = []
-    for seg in segments:
-        start = seg.get('start', 0)
-        end = seg.get('end', 0)
-        text = seg.get('text', '').strip()
-        buffer.append(f"[{start:.1f}-{end:.1f}] {text}")
-    
-    return "\n".join(buffer)
-
-
-def _clean_number(num):
-    """Converte 10.0 para 10 (int), mas mantém 5.8 (float)."""
-    try:
-        f_num = float(num)
-        if f_num.is_integer():
-            return int(f_num)
-        return f_num
-    except:
-        return num
-
-
 def _analyze_transcript_with_gemini(
     segments: list,
     language: str,
@@ -139,6 +271,8 @@ def _analyze_transcript_with_gemini(
     max_duration: int,
     video_duration_s: float,
     video_id: str,
+    organization_id: str,
+    max_clips_desired: int,
 ) -> dict:
     enable_chunking = bool(getattr(settings, "GEMINI_ANALYZE_ENABLE_CHUNKING", True))
     chunk_seconds = int(getattr(settings, "GEMINI_ANALYZE_CHUNK_SECONDS", 600) or 600)
@@ -154,17 +288,33 @@ def _analyze_transcript_with_gemini(
             should_chunk = True
 
     if not should_chunk:
-        return _analyze_with_gemini(formatted_text, language, min_duration=min_duration, max_duration=max_duration)
+        return _analyze_with_gemini(
+            formatted_text,
+            language,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            organization_id=organization_id,
+            max_candidates=max_clips_desired,
+        )
 
     chunks = _chunk_segments_by_time(segments, chunk_seconds)
     if not chunks:
-        return _analyze_with_gemini(formatted_text, language, min_duration=min_duration, max_duration=max_duration)
+        return _analyze_with_gemini(
+            formatted_text,
+            language,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            organization_id=organization_id,
+            max_candidates=max_clips_desired,
+        )
 
     merged_candidates: list[dict] = []
     merged_title: str | None = None
     merged_description: str | None = None
     merged_overall_tone: str | None = None
     merged_key_topics: list[str] = []
+
+    fillers_dropped = 0
 
     total = len(chunks)
     for i, chunk in enumerate(chunks):
@@ -185,6 +335,8 @@ def _analyze_transcript_with_gemini(
                 language,
                 min_duration=min_duration,
                 max_duration=max_duration,
+                organization_id=organization_id,
+                max_candidates=max(10, min(20, max_clips_desired)),
             )
         except Exception as e:
             logger.warning(
@@ -217,12 +369,27 @@ def _analyze_transcript_with_gemini(
 
         cand = (chunk_result or {}).get("candidates") or []
         if isinstance(cand, list):
-            merged_candidates.extend([c for c in cand if isinstance(c, dict)])
+            for c in cand:
+                if not isinstance(c, dict):
+                    continue
+                cat = (c.get("category") or "").strip().upper()
+                if cat == "FILLER":
+                    fillers_dropped += 1
+                    continue
+                merged_candidates.append(c)
 
     if not merged_candidates:
         raise RuntimeError("Falha ao analisar todos os chunks com Gemini (nenhum candidato retornado).")
 
-    return {
+    # Hardcap overall output
+    try:
+        merged_candidates.sort(key=lambda c: float(c.get("engagement_score", 0) or 0), reverse=True)
+    except Exception:
+        pass
+
+    merged_candidates = merged_candidates[: int(max_clips_desired)]
+
+    out = {
         "title": merged_title or "",
         "description": merged_description or "",
         "candidates": merged_candidates,
@@ -230,47 +397,26 @@ def _analyze_transcript_with_gemini(
         "key_topics": merged_key_topics,
     }
 
+    out["meta"] = {
+        "chunks_total": total,
+        "fillers_dropped": fillers_dropped,
+    }
 
-def _chunk_segments_by_time(segments: list, chunk_duration_seconds: int) -> list[list]:
-    if not segments or not chunk_duration_seconds or chunk_duration_seconds <= 0:
-        return []
-
-    filtered = []
-    for s in segments:
-        if not isinstance(s, dict):
-            continue
-        if s.get("start") is None or s.get("end") is None:
-            continue
-        filtered.append(s)
-
-    if not filtered:
-        return []
-
-    filtered.sort(key=lambda s: float(s.get("start", 0) or 0))
-
-    chunks: list[list] = []
-    current: list = []
-    chunk_start = float(filtered[0].get("start", 0) or 0)
-
-    for seg in filtered:
-        seg_start = float(seg.get("start", 0) or 0)
-        if seg_start - chunk_start >= float(chunk_duration_seconds):
-            if current:
-                chunks.append(current)
-            current = [seg]
-            chunk_start = seg_start
-        else:
-            current.append(seg)
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+    return out
 
 
-def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, max_duration: int) -> dict:
+def _analyze_with_gemini(
+    formatted_text: str,
+    language: str,
+    min_duration: int,
+    max_duration: int,
+    organization_id: str,
+    max_candidates: int,
+) -> dict:
     client = _get_gemini_client()
-    
+
+    _enforce_gemini_rate_limit(organization_id=organization_id, kind="analyze")
+
     response_schema = {
         "type": "object",
         "properties": {
@@ -287,8 +433,12 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
                         "engagement_score": {"type": "number"},
                         "hook_title": {"type": "string"},
                         "tone": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": ["MUST_HAVE", "GOOD", "FILLER"],
+                        },
                     },
-                    "required": ["text", "start_time", "end_time", "engagement_score", "hook_title", "tone"]
+                    "required": ["text", "start_time", "end_time", "engagement_score", "hook_title", "tone", "category"]
                 }
             },
             "overall_tone": {"type": "string"},
@@ -299,7 +449,9 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
         },
         "required": ["title", "description", "candidates", "overall_tone", "key_topics"]
     }
-    
+
+    max_candidates = int(max(5, min(int(max_candidates or 15), 25)))
+
     base_instructions = f"""
     Você é um editor de vídeo de classe mundial e estrategista de conteúdo viral.
     Analise a transcrição fornecida (que contém timestamps no formato [início-fim]).
@@ -320,6 +472,15 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
     - Evite retornar apenas 1-2 candidatos. Retorne o máximo possível de candidatos válidos (idealmente 12-25), desde que respeitem as regras.
     - Evite candidatos sobrepostos (mantenha uma distância mínima de ~5s entre candidatos quando possível).
 
+    QUANTIDADE E QUALIDADE (CRÍTICO):
+    - Retorne NO MÁXIMO {max_candidates} candidatos.
+    - Priorize QUALIDADE sobre quantidade.
+    - Classifique cada candidato em uma categoria:
+      - MUST_HAVE: 8.0 a 10.0 (muito forte)
+      - GOOD: 6.0 a 7.9 (bom)
+      - FILLER: 4.0 a 5.9 (só se faltar opção)
+    - Seja consistente: engagement_score é RELATIVO dentro do contexto do vídeo (não absoluto global).
+
     FOLGA NO FINAL DO CORTE:
     - Para evitar cortes “em cima” do fim da fala, faça o `end_time` terminar ~1.0s DEPOIS do final natural do segmento,
       desde que isso ainda use timestamps existentes e respeite a duração máxima.
@@ -334,6 +495,7 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
     FORMATO DO TEXTO DO CANDIDATO:
     - Em `text`, inclua o trecho completo do clip (não apenas a frase final).
     - Evite recortes que comecem/terminem no meio da ideia.
+
     """
 
     if language.startswith("pt"):
@@ -379,9 +541,9 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
     {formatted_text}"""
 
     model_name = "gemini-2.5-flash-lite"
-    
-    max_output_tokens = int(getattr(settings, "GEMINI_ANALYZE_MAX_OUTPUT_TOKENS", 8192) or 8192)
-    
+
+    max_output_tokens = int(getattr(settings, "GEMINI_ANALYZE_MAX_OUTPUT_TOKENS", 12288) or 12288)
+
     response = client.models.generate_content(
         model=f'models/{model_name}',
         contents=prompt,
@@ -392,6 +554,8 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
             max_output_tokens=max_output_tokens,
         )
     )
+
+    _log_gemini_usage(response, organization_id=organization_id, kind="analyze", model=model_name)
 
     raw_text = _get_gemini_response_text(response)
     logger.info(
@@ -415,6 +579,14 @@ def _analyze_with_gemini(formatted_text: str, language: str, min_duration: int, 
             )
             raise
 
+    try:
+        cands = analysis_data.get("candidates") or []
+        if isinstance(cands, list):
+            # Keep max_candidates from this call.
+            analysis_data["candidates"] = cands[:max_candidates]
+    except Exception:
+        pass
+
     logger.info(f"Análise Gemini concluída: {len(analysis_data.get('candidates', []))} clips identificados")
     return analysis_data
 
@@ -423,7 +595,7 @@ def _safe_load_json_response(text: str) -> dict:
     if not isinstance(text, str):
         raise json.JSONDecodeError("Response text is not a string", str(text), 0)
 
-    raw = text.strip()
+    raw = text.replace("\ufeff", "").replace("\x00", "").strip()
     if not raw:
         raise json.JSONDecodeError("Empty response text", raw, 0)
 
@@ -451,6 +623,18 @@ def _safe_load_json_response(text: str) -> dict:
         if not isinstance(parsed, dict):
             raise json.JSONDecodeError("JSON root is not an object", extracted[:5000], 0)
         return parsed
+
+    if "{" in raw and "}" in raw:
+        try:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if 0 <= start < end:
+                candidate = raw[start : end + 1].strip()
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+        except Exception:
+            pass
 
     preview = raw[:5000]
     raise json.JSONDecodeError("Could not extract valid JSON from response", preview, 0)
@@ -500,7 +684,7 @@ def _repair_gemini_json(client, raw_text: str, response_schema: dict) -> dict:
             response_mime_type="application/json",
             response_schema=response_schema,
             temperature=0.0,
-            max_output_tokens=int(getattr(settings, "GEMINI_ANALYZE_REPAIR_MAX_OUTPUT_TOKENS", 4096) or 4096),
+            max_output_tokens=int(getattr(settings, "GEMINI_ANALYZE_REPAIR_MAX_OUTPUT_TOKENS", 8192) or 8192),
         ),
     )
 
@@ -585,3 +769,49 @@ def _get_duration_bounds(video_id: str) -> tuple[int, int]:
         return min_d, max_d
     except Exception:
         return 10, 60
+
+
+def _enforce_gemini_rate_limit(organization_id: str, kind: str) -> None:
+    """Simple sliding window limiter via Redis cache.
+
+    Defaults: 60 calls/minute per org per kind.
+    """
+    org_key = (organization_id or "unknown").strip()
+    k = (kind or "generic").strip().lower()
+
+    window_seconds = int(getattr(settings, "GEMINI_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    max_calls = int(getattr(settings, "GEMINI_RATE_LIMIT_MAX_CALLS", 60) or 60)
+
+    cache_key = f"gemini_rl:{k}:{org_key}"
+    try:
+        cache.add(cache_key, 0, timeout=window_seconds)
+        current = cache.incr(cache_key)
+    except Exception:
+        # If cache is unavailable, do not block the pipeline.
+        return
+
+    if int(current) > int(max_calls):
+        raise RuntimeError(f"Rate limit Gemini excedido (org={org_key} kind={k}). Tente novamente em instantes.")
+
+
+def _log_gemini_usage(response, organization_id: str, kind: str, model: str) -> None:
+    try:
+        usage = getattr(response, "usage_metadata", None) or getattr(response, "usageMetadata", None)
+        if usage is None:
+            return
+
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or getattr(usage, "promptTokenCount", None)
+        output_tokens = getattr(usage, "candidates_token_count", None) or getattr(usage, "candidatesTokenCount", None)
+        total_tokens = getattr(usage, "total_token_count", None) or getattr(usage, "totalTokenCount", None)
+
+        logger.info(
+            "[gemini_usage] org=%s kind=%s model=%s prompt_tokens=%s output_tokens=%s total_tokens=%s",
+            organization_id,
+            kind,
+            model,
+            prompt_tokens,
+            output_tokens,
+            total_tokens,
+        )
+    except Exception:
+        return

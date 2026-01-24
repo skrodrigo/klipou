@@ -87,6 +87,8 @@ def caption_clips_task(self, video_id: str) -> dict:
             video.error_message = str(e)
             video.save()
 
+            update_job_status(str(video.video_id), "failed", progress=100, current_step="captioning")
+
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)
 

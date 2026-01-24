@@ -24,6 +24,8 @@ def normalize_video_task(self, video_id: str) -> dict:
         video.current_step = "normalizing"
         video.save()
 
+        update_job_status(str(video.video_id), "normalizing", progress=20, current_step="normalizing")
+
         video_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")
         os.makedirs(video_dir, exist_ok=True)
 

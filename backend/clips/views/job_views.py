@@ -48,7 +48,25 @@ def create_job(request):
         
         video_id = request.data.get("video_id")
         organization_id = request.data.get("organization_id")
-        configuration = request.data.get("configuration", {})
+        configuration_in = request.data.get("configuration", {})
+
+        configuration = {}
+        if isinstance(configuration_in, dict):
+            min_d = configuration_in.get("minDuration")
+            max_d = configuration_in.get("maxDuration")
+            auto_schedule = configuration_in.get("autoSchedule")
+
+            if min_d is not None:
+                configuration["minDuration"] = int(min_d)
+                configuration["min_clip_duration"] = int(min_d)
+
+            if max_d is not None:
+                configuration["maxDuration"] = int(max_d)
+                configuration["max_clip_duration"] = int(max_d)
+
+            if auto_schedule is not None:
+                configuration["autoSchedule"] = bool(auto_schedule)
+                configuration["auto_schedule"] = bool(auto_schedule)
 
         # Obtém dados do decorator
         credits_needed = request.credits_needed
@@ -222,6 +240,9 @@ def sse_job_status(request, job_id):
         """Generator que envia eventos SSE."""
         last_status = None
         last_progress = None
+        last_current_step = None
+        last_error_message = None
+        last_error_code = None
         reconnect_attempts = 0
         max_reconnect_time = 300  # 5 minutos
 
@@ -230,7 +251,13 @@ def sse_job_status(request, job_id):
                 job.refresh_from_db()
 
                 # Envia atualização se status ou progresso mudou
-                if job.status != last_status or job.progress != last_progress:
+                if (
+                    job.status != last_status
+                    or job.progress != last_progress
+                    or job.current_step != last_current_step
+                    or job.error_message != last_error_message
+                    or job.error_code != last_error_code
+                ):
                     event_data = {
                         "job_id": str(job.job_id),
                         "status": job.status,
@@ -244,6 +271,9 @@ def sse_job_status(request, job_id):
 
                     last_status = job.status
                     last_progress = job.progress
+                    last_current_step = job.current_step
+                    last_error_message = job.error_message
+                    last_error_code = job.error_code
 
                     # Se job completou ou falhou, encerra conexão
                     if job.status in ["done", "failed"]:

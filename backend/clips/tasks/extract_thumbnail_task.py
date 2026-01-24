@@ -24,7 +24,7 @@ def extract_thumbnail_task(self, video_id: str):
         
         video.current_step = "extracting_thumbnail"
         video.save()
-        update_job_status(str(video_id), "extracting_thumbnail", progress=15, current_step="extracting_thumbnail")
+        update_job_status(str(video_id), "normalizing", progress=15, current_step="extracting_thumbnail")
         
         from django.conf import settings
         video_dir = os.path.join(settings.MEDIA_ROOT, f"videos/{video_id}")

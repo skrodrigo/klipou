@@ -6,12 +6,11 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useVideoStore } from "@/lib/store/video-store"
-import { AlertSquareIcon, ArrowLeft02Icon, AspectRatioIcon, Calendar01Icon, Clock01Icon, Globe02Icon } from "@hugeicons/core-free-icons"
+import { AlertSquareIcon, ArrowLeft02Icon, Calendar01Icon, Clock01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
@@ -24,11 +23,9 @@ import { Spinner } from "@/components/ui/spinner"
 export default function VideoSettingsPage() {
   const router = useRouter()
   const { videoFile, videoUrl, videoId, videoTitle, thumbnailUrl, duration, fileSize, taskId, setProcessingConfig } = useVideoStore()
-  const [ratio, setRatio] = useState("9:16")
   const [clipLength, setClipLength] = useState("60-90")
   const [autoSchedule, setAutoSchedule] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [language, setLanguage] = useState<string>("pt-br")
   const [videoDuration, setVideoDuration] = useState(0)
 
   const { data: user } = useQuery({
@@ -63,11 +60,10 @@ export default function VideoSettingsPage() {
 
     setIsSubmitting(true)
     try {
-      const [, maxDuration] = clipLength.split("-").map(Number)
+      const [minDuration, maxDuration] = clipLength.split("-").map(Number)
 
       const config = {
-        language,
-        ratio,
+        minDuration,
         maxDuration,
         autoSchedule,
       }
@@ -148,48 +144,6 @@ export default function VideoSettingsPage() {
 
           <div className="space-y-5">
             <div className="space-y-2">
-              <Label className="text-muted-foreground">Linguagem do vídeo</Label>
-              <Select value={language} onValueChange={(value) => {
-                if (value) setLanguage(value)
-              }}>
-                <SelectTrigger className="flex items-center gap-2 w-full">
-                  <div className="flex items-center gap-3">
-                    <HugeiconsIcon size={16} icon={Globe02Icon} />
-                    <span>
-                      {language === "pt-br" ? "Português (Brasil)" : language === "en" ? "English" : "Español"}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pt-br">Português (Brasil)</SelectItem>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="es">Español</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Ratio para gerar os clips</Label>
-              <Select value={ratio} onValueChange={(value) => {
-                if (value) setRatio(value)
-              }}>
-                <SelectTrigger className="flex items-center gap-2 w-full">
-                  <div className="flex items-center gap-3">
-                    <HugeiconsIcon size={16} icon={AspectRatioIcon} />
-                    <span>
-                      {ratio === "9:16" ? "Ratio 9:16" : ratio === "16:9" ? "Ratio 16:9" : "Ratio 1:1"}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="9:16">Ratio 9:16</SelectItem>
-                  <SelectItem value="16:9">Ratio 16:9</SelectItem>
-                  <SelectItem value="1:1">Ratio 1:1</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
               <Label className="text-muted-foreground">Duração média dos clips</Label>
               <Select value={clipLength} onValueChange={(value) => {
                 if (value) setClipLength(value)
@@ -230,9 +184,9 @@ export default function VideoSettingsPage() {
             </Button>
 
             <div className="flex justify-end items-center gap-2">
-              <p className="text-end text-base text-foreground">
+              <Label>
                 Irá usar {calculateCredits()} créditos
-              </p>
+              </Label>
               <HugeiconsIcon size={16} icon={AlertSquareIcon} />
             </div>
 

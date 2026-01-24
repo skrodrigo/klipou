@@ -56,7 +56,7 @@ def _get_whisper_model():
     except ImportError:
         raise RuntimeError("Biblioteca 'faster-whisper' não encontrada. Instale: pip install faster-whisper")
 
-    model_size = getattr(settings, "WHISPER_MODEL", "tiny")
+    model_size = getattr(settings, "WHISPER_MODEL", "small")
     local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
 
     for noisy_logger in ("httpx", "httpcore", "huggingface_hub"):
@@ -138,9 +138,11 @@ def transcribe_video_task(self, video_id: str) -> dict:
         if not os.path.exists(video_path):
             raise FileNotFoundError("Arquivo video_normalized.mp4 não encontrado")
 
+        update_job_status(str(video.video_id), "transcribing", progress=35, current_step="extracting_audio")
         audio_path = _extract_audio_with_ffmpeg(video_path, video_dir)
 
-        transcript_data = _transcribe_with_whisper(audio_path)
+        update_job_status(str(video.video_id), "transcribing", progress=35, current_step="whisper_transcribing")
+        transcript_data = _transcribe_with_whisper(audio_path, job_video_id=str(video.video_id))
 
         if bool(getattr(settings, "GEMINI_REFINE_WHISPER_TRANSCRIPT", False)):
             try:
@@ -257,9 +259,10 @@ def _extract_audio_with_ffmpeg(video_path: str, output_dir: str) -> str:
         raise RuntimeError(f"Erro FFmpeg áudio: {e.stderr.decode() if e.stderr else str(e)}")
 
 
-def _transcribe_with_whisper(audio_path: str) -> dict:
+def _transcribe_with_whisper(audio_path: str, job_video_id: str) -> dict:
     global _model_cache
     model = _get_whisper_model()
+
     whisper_word_timestamps = bool(getattr(settings, "WHISPER_WORD_TIMESTAMPS", True))
     beam_size = int(getattr(settings, "WHISPER_BEAM_SIZE", 5))
 
@@ -283,7 +286,7 @@ def _transcribe_with_whisper(audio_path: str) -> dict:
             except Exception:
                 pass
             from faster_whisper import WhisperModel
-            model_size = getattr(settings, "WHISPER_MODEL", "tiny")
+            model_size = getattr(settings, "WHISPER_MODEL", "small")
             local_model_dir = getattr(settings, "WHISPER_MODEL_DIR", None)
             model_source = local_model_dir or model_size
             _model_cache = WhisperModel(model_source, device="cpu", compute_type="int8")
@@ -293,7 +296,15 @@ def _transcribe_with_whisper(audio_path: str) -> dict:
 
     structured_segments = []
     full_text_parts = []
+    last_heartbeat = time.time()
     for seg in segments_generator:
+        if time.time() - last_heartbeat >= 20:
+            try:
+                update_job_status(job_video_id, "transcribing", progress=35, current_step=f"whisper_running_{len(structured_segments)}")
+            except Exception:
+                pass
+            last_heartbeat = time.time()
+
         text_stripped = seg.text.strip()
         if text_stripped:
             full_text_parts.append(text_stripped)

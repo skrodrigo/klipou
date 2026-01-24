@@ -42,9 +42,11 @@ def reframe_video_task(self, video_id: str) -> dict:
         video.status = "clipping"
         video.current_step = "clipping"
         video.save()
+
+        update_job_status(str(video.video_id), "clipping", progress=82, current_step="clipping")
         
-        from .clip_generation_task import clip_generation_task
-        clip_generation_task.apply_async(
+        from .caption_clips_task import caption_clips_task
+        caption_clips_task.apply_async(
             args=[str(video.video_id)],
             queue=f"video.clip.{get_plan_tier(org.plan)}",
         )
@@ -63,6 +65,8 @@ def reframe_video_task(self, video_id: str) -> dict:
             video.status = "failed"
             video.error_message = str(e)
             video.save()
+
+            update_job_status(str(video.video_id), "failed", progress=100, current_step="reframing")
 
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)

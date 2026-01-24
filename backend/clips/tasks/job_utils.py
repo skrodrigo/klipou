@@ -27,16 +27,26 @@ def update_job_status(
         if current_step is not None:
             update_fields["current_step"] = current_step
 
-        affected = Job.objects.filter(video_id=video_id).update(**update_fields)
-        
-        if affected == 0:
-            logger.warning(f"[job_utils] Job não encontrado para video_id={video_id}")
-            return False
-        
-        logger.debug(
-            f"[job_utils] Job atualizado: video_id={video_id}, "
-            f"status={status}, progress={progress}"
-        )
+        qs = Job.objects.filter(video_id=video_id).exclude(status__in=["done", "failed"]).order_by("-created_at")
+        jobs = list(qs)
+
+        if not jobs:
+            # Fallback: if no active jobs exist, update the latest one (best-effort).
+            job = Job.objects.filter(video_id=video_id).order_by("-created_at").first()
+            if not job:
+                logger.warning(f"[job_utils] Job não encontrado para video_id={video_id}")
+                return False
+            jobs = [job]
+
+        for job in jobs:
+            for k, v in update_fields.items():
+                setattr(job, k, v)
+            job.save(update_fields=list(update_fields.keys()))
+            logger.debug(
+                f"[job_utils] Job atualizado: job_id={job.job_id} video_id={video_id}, "
+                f"status={status}, progress={progress}, current_step={current_step}"
+            )
+
         return True
 
     except Exception as e:

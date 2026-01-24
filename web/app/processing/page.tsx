@@ -11,7 +11,7 @@ import { AlertSquareIcon, CancelSquareIcon, Loading03Icon, LogoutSquare02Icon, S
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useQuery } from "@tanstack/react-query"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 type ProcessingStatus = "ingestion" | "queued" | "downloading" | "normalizing" | "transcribing" | "analyzing" | "embedding" | "selecting" | "reframing" | "rendering" | "clipping" | "captioning" | "done" | "failed"
@@ -34,9 +34,11 @@ export default function ProcessingPage() {
 function ProcessingPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const initialJobIdParam = searchParams.get("jobId")
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState<ProcessingStatus>("queued")
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(initialJobIdParam)
+  const sseRef = useRef<EventSource | null>(null)
   const [videoId, setVideoId] = useState<string | null>(null)
   const [config, setConfig] = useState<any>(null)
   const [didInitFromStore, setDidInitFromStore] = useState(false)
@@ -58,6 +60,7 @@ function ProcessingPageInner() {
   const [isCreatingJob, setIsCreatingJob] = useState(false)
   const [isUploadComplete, setIsUploadComplete] = useState(false)
   const [isUploading, setIsUploading] = useState(true)
+  const [dots, setDots] = useState(".")
 
   const { data: user, isLoading: isUserLoading } = useQuery({
     queryKey: ["auth-session"],
@@ -76,6 +79,7 @@ function ProcessingPageInner() {
 
   useEffect(() => {
     const vid = searchParams.get("videoId")
+    const jobIdParam = searchParams.get("jobId")
     const configStr = searchParams.get("config")
 
     if (!didInitFromStore) {
@@ -99,6 +103,11 @@ function ProcessingPageInner() {
 
     if (vid && vid !== videoId) {
       setVideoId(vid)
+    }
+
+    if (jobIdParam && jobIdParam !== jobId) {
+      setJobId(jobIdParam)
+      setProcessingJobId(jobIdParam)
     }
     if (configStr) {
       try {
@@ -178,6 +187,12 @@ function ProcessingPageInner() {
   }, [videoId, videoFile, isUploadComplete])
 
   useEffect(() => {
+    // If there's already a jobId in the URL (e.g. page refresh), never create a new job.
+    const jobIdFromUrl = searchParams.get("jobId")
+    if (jobIdFromUrl) {
+      return
+    }
+
     if (!videoId || !config || !user || isCreatingJob || jobId || !isUploadComplete) {
       return;
     }
@@ -188,8 +203,7 @@ function ProcessingPageInner() {
         if (!videoFile) {
           const { startIngestionFromUrl } = await import("@/infra/videos/upload")
           const started = await startIngestionFromUrl(videoId, {
-            language: config.language,
-            ratio: config.ratio,
+            minDuration: config.minDuration,
             maxDuration: config.maxDuration,
             autoSchedule: config.autoSchedule,
           })
@@ -197,6 +211,12 @@ function ProcessingPageInner() {
           if (started.job_id) {
             setJobId(started.job_id)
             setProcessingJobId(started.job_id)
+
+            router.replace(
+              `/processing?videoId=${videoId}&jobId=${started.job_id}&config=${encodeURIComponent(
+                JSON.stringify(config)
+              )}`
+            )
           }
           return
         }
@@ -206,10 +226,9 @@ function ProcessingPageInner() {
           organization_id: user.organization_id || "",
           user_id: String(user.user_id),
           configuration: {
-            language: config.language,
-            target_ratios: [config.ratio],
-            max_clip_duration: config.maxDuration,
-            auto_schedule: config.autoSchedule,
+            minDuration: config.minDuration,
+            maxDuration: config.maxDuration,
+            autoSchedule: config.autoSchedule,
           },
         };
 
@@ -217,6 +236,12 @@ function ProcessingPageInner() {
         setJobId(jobResponse.job_id);
         setProcessingJobId(jobResponse.job_id)
         console.log("Job criado com sucesso:", jobResponse.job_id);
+
+        router.replace(
+          `/processing?videoId=${videoId}&jobId=${jobResponse.job_id}&config=${encodeURIComponent(
+            JSON.stringify(config)
+          )}`
+        )
       } catch (err) {
         console.error("Erro ao criar job:", err);
         toast.error(err instanceof Error ? err.message : "Erro ao criar job");
@@ -241,6 +266,18 @@ function ProcessingPageInner() {
     const initialDelay = 5000;
 
     const connectToSSE = () => {
+      if (isClosing) {
+        return
+      }
+
+      if (sseRef.current) {
+        try {
+          sseRef.current.close()
+        } catch (e) {
+        }
+        sseRef.current = null
+      }
+
       const eventSource = getJobProgress(jobId);
 
       if (!eventSource) {
@@ -248,16 +285,16 @@ function ProcessingPageInner() {
         return;
       }
 
+      sseRef.current = eventSource
+
       eventSource.onmessage = (event) => {
         try {
           const data: StatusMessage = JSON.parse(event.data);
 
-          if (status !== "done" && status !== "failed") {
-            setStatus(data.status);
-            setProgress(data.progress);
-            setProcessingStatus(data.status)
-            setProcessingProgress(data.progress)
-          }
+          setStatus(data.status);
+          setProgress(data.progress);
+          setProcessingStatus(data.status)
+          setProcessingProgress(data.progress)
 
           if (data.status === "done") {
             isClosing = true;
@@ -266,7 +303,13 @@ function ProcessingPageInner() {
             setProcessingStatus("done")
             setProcessingProgress(100)
             setTimeout(() => {
-              eventSource.close();
+              try {
+                eventSource.close();
+              } catch (e) {
+              }
+              if (sseRef.current === eventSource) {
+                sseRef.current = null
+              }
               router.push("/dashboard/projects");
             }, 2000);
           } else if (data.status === "failed") {
@@ -274,7 +317,13 @@ function ProcessingPageInner() {
             setStatus("failed");
             setProcessingStatus("failed")
             setError(data.error_message || "O processamento falhou. Por favor, tente novamente.");
-            eventSource.close();
+            try {
+              eventSource.close();
+            } catch (e) {
+            }
+            if (sseRef.current === eventSource) {
+              sseRef.current = null
+            }
           }
         } catch (e) {
           console.error("Error parsing SSE message:", e);
@@ -283,13 +332,27 @@ function ProcessingPageInner() {
 
       eventSource.onerror = (event: any) => {
         if (!isClosing) {
-          if (event.status === 404 && retries < maxRetries) {
+          // EventSource doesn't expose HTTP status reliably. Treat any error as transient and retry.
+          if (retries < maxRetries) {
             retries++;
-            eventSource.close();
+            try {
+              eventSource.close();
+            } catch (e) {
+            }
+            if (sseRef.current === eventSource) {
+              sseRef.current = null
+            }
             setTimeout(connectToSSE, retryDelay);
-          } else {
-            setError("Ocorreu um erro ao conectar com o servidor. Por favor, tente novamente.");
+            return;
+          }
+
+          setError("Ocorreu um erro ao conectar com o servidor. Por favor, tente novamente.");
+          try {
             eventSource.close();
+          } catch (e) {
+          }
+          if (sseRef.current === eventSource) {
+            sseRef.current = null
           }
         }
       };
@@ -300,8 +363,25 @@ function ProcessingPageInner() {
     return () => {
       isClosing = true;
       clearTimeout(initialTimer);
+      if (sseRef.current) {
+        try {
+          sseRef.current.close()
+        } catch (e) {
+        }
+        sseRef.current = null
+      }
     };
-  }, [jobId, router, status]);
+  }, [jobId, router, setProcessingProgress, setProcessingStatus]);
+
+  useEffect(() => {
+    if (status === "done" || status === "failed") return
+
+    const interval = setInterval(() => {
+      setDots((prev) => (prev.length >= 3 ? "." : prev + "."))
+    }, 500)
+
+    return () => clearInterval(interval)
+  }, [status])
 
   const stages: ProcessingStatus[] = [
     "queued",
@@ -312,6 +392,8 @@ function ProcessingPageInner() {
     "embedding",
     "selecting",
     "reframing",
+    "clipping",
+    "captioning",
     "rendering",
   ];
 
@@ -409,21 +491,13 @@ function ProcessingPageInner() {
               { stage: "embedding" as ProcessingStatus, label: "Indexando o conteúdo" },
               { stage: "selecting" as ProcessingStatus, label: "Selecionando melhores trechos" },
               { stage: "reframing" as ProcessingStatus, label: "Reenquadrando vídeo" },
+              { stage: "captioning" as ProcessingStatus, label: "Gerando legendas" },
               { stage: "rendering" as ProcessingStatus, label: "Gerando clips finais" },
             ].map(({ stage, label }, idx) => {
               const state = getStageState(stage);
               const failedIdx = getFailedStageIndex();
               const isFailedStage = error && failedIdx === idx;
               const isAfterFailed = error && failedIdx !== -1 && idx > failedIdx;
-              const [dots, setDots] = useState('.');
-
-              useEffect(() => {
-                if (state !== 'active') return;
-                const interval = setInterval(() => {
-                  setDots(prev => prev.length >= 3 ? '.' : prev + '.');
-                }, 500);
-                return () => clearInterval(interval);
-              }, [state]);
 
               return (
                 <div key={stage} className="flex items-center gap-3">

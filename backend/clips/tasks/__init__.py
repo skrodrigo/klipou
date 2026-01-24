@@ -9,6 +9,7 @@ from .reframe_video_task import reframe_video_task
 from .clip_scoring_task import clip_scoring_task
 from .caption_clips_task import caption_clips_task
 from .clip_generation_task import clip_generation_task
+from .upload_original_video_task import upload_original_video_task
 from .post_to_social_task import post_to_social_task
 
 __all__ = (
@@ -23,5 +24,6 @@ __all__ = (
     "clip_scoring_task",
     "caption_clips_task",
     "clip_generation_task",
+    "upload_original_video_task",
     "post_to_social_task",
 )

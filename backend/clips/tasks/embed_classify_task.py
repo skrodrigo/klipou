@@ -1,6 +1,7 @@
 import logging
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 import numpy as np
 from numpy.linalg import norm
 import json
@@ -42,7 +43,7 @@ def embed_classify_task(self, video_id: str) -> dict:
             texts = [c.get("text", "") for c in candidates if c.get("text")]
             
             if texts:
-                embeddings = _get_batch_embeddings(client, texts)
+                embeddings = _get_batch_embeddings(client, texts, organization_id=str(org.organization_id))
                 if len(embeddings) != len(texts):
                     raise RuntimeError(
                         f"Embeddings ({len(embeddings)}) != Texts ({len(texts)})"
@@ -103,13 +104,15 @@ def embed_classify_task(self, video_id: str) -> dict:
             video.error_message = str(e)
             video.save()
 
+            update_job_status(str(video.video_id), "failed", progress=100, current_step="embedding")
+
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
         return {"error": str(e), "status": "failed"}
 
 
-def _get_batch_embeddings(client, texts: list[str], output_dimensionality: int = 768) -> list[list]:
+def _get_batch_embeddings(client, texts: list[str], organization_id: str = "", output_dimensionality: int = 768) -> list[list]:
     if not texts:
         return []
 
@@ -149,11 +152,15 @@ def _get_batch_embeddings(client, texts: list[str], output_dimensionality: int =
                 len(batch_texts),
             )
 
+            _enforce_gemini_rate_limit(organization_id=organization_id, kind="embed")
+
             response = client.models.embed_content(
                 model="text-embedding-004",
                 contents=batch_texts,
                 config=types.EmbedContentConfig(output_dimensionality=output_dimensionality),
             )
+
+            _log_gemini_usage(response, organization_id=organization_id, kind="embed", model="text-embedding-004")
 
             embedding_list = _extract_embedding_values(response)
             if len(embedding_list) != len(batch_texts):
@@ -269,7 +276,7 @@ def _get_default_viral_embedding() -> np.ndarray:
     
     try:
         client = _get_gemini_client()
-        embeds = _get_batch_embeddings(client, [viral_concept])
+        embeds = _get_batch_embeddings(client, [viral_concept], organization_id="global")
         if embeds and embeds[0]:
             _DEFAULT_VIRAL_EMBEDDING = np.array(embeds[0], dtype=np.float32)
             return _DEFAULT_VIRAL_EMBEDDING
@@ -310,3 +317,44 @@ def _get_gemini_client():
     if not api_key:
         raise Exception("GEMINI_API_KEY não configurada")
     return genai.Client(api_key=api_key)
+
+
+def _enforce_gemini_rate_limit(organization_id: str, kind: str) -> None:
+    org_key = (organization_id or "unknown").strip()
+    k = (kind or "generic").strip().lower()
+
+    window_seconds = int(getattr(settings, "GEMINI_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    max_calls = int(getattr(settings, "GEMINI_RATE_LIMIT_MAX_CALLS", 60) or 60)
+
+    cache_key = f"gemini_rl:{k}:{org_key}"
+    try:
+        cache.add(cache_key, 0, timeout=window_seconds)
+        current = cache.incr(cache_key)
+    except Exception:
+        return
+
+    if int(current) > int(max_calls):
+        raise RuntimeError(f"Rate limit Gemini excedido (org={org_key} kind={k}).")
+
+
+def _log_gemini_usage(response, organization_id: str, kind: str, model: str) -> None:
+    try:
+        usage = getattr(response, "usage_metadata", None) or getattr(response, "usageMetadata", None)
+        if usage is None:
+            return
+
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or getattr(usage, "promptTokenCount", None)
+        output_tokens = getattr(usage, "candidates_token_count", None) or getattr(usage, "candidatesTokenCount", None)
+        total_tokens = getattr(usage, "total_token_count", None) or getattr(usage, "totalTokenCount", None)
+
+        logger.info(
+            "[gemini_usage] org=%s kind=%s model=%s prompt_tokens=%s output_tokens=%s total_tokens=%s",
+            organization_id,
+            kind,
+            model,
+            prompt_tokens,
+            output_tokens,
+            total_tokens,
+        )
+    except Exception:
+        return

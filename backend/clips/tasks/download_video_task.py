@@ -97,23 +97,18 @@ def download_video_task(self, video_id: str) -> dict:
                         str(video.video_id),
                         "downloading",
                         progress=13,
-                        current_step="uploading_original_to_r2",
+                        current_step="enqueue_upload_original_to_r2",
                     )
-                    logger.info(
-                        "Iniciando upload do vídeo original para R2: path=%s size=%s bytes",
-                        video_path,
-                        os.path.getsize(video_path) if os.path.exists(video_path) else "<missing>",
+                    # Persist metadata early; upload will run async.
+                    video.save()
+
+                    from .upload_original_video_task import upload_original_video_task
+                    upload_original_video_task.apply_async(
+                        args=[str(video.video_id)],
+                        queue=f"video.download.{get_plan_tier(org.plan)}",
                     )
-                    uploaded_key = storage.upload_video(
-                        file_path=video_path,
-                        organization_id=str(video.organization_id),
-                        video_id=str(video.video_id),
-                        original_filename=video.original_filename or "video_original.mp4",
-                    )
-                    video.storage_path = uploaded_key
-                    logger.info("Upload para R2 concluído: key=%s", uploaded_key)
                 except Exception as e:
-                    logger.warning(f"Falha ao fazer upload do vídeo original para o R2: {e}")
+                    logger.warning(f"Falha ao enfileirar upload async do vídeo original para o R2: {e}")
         else:
             raise Exception("Nenhuma fonte de vídeo disponível (storage_path ou source_url)")
 
@@ -162,6 +157,13 @@ def download_video_task(self, video_id: str) -> dict:
             video.error_message = str(e)
             video.retry_count += 1
             video.save()
+
+            update_job_status(
+                str(video.video_id),
+                "failed",
+                progress=100,
+                current_step="downloading",
+            )
 
             if self.request.retries < self.max_retries:
                 countdown = 2 ** self.request.retries

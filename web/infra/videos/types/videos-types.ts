@@ -141,6 +141,10 @@ export type CreateJobPayload = {
   organization_id: string
   user_id: string
   configuration?: {
+    minDuration?: number
+    maxDuration?: number
+    autoSchedule?: boolean
+
     language?: string
     target_ratios?: string[]
     max_clip_duration?: number
