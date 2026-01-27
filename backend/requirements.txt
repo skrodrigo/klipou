@@ -14,3 +14,6 @@ stripe>=10.0.0
 django-redis>=5.4.0
 mediapipe
 protobuf==4.25.3
+opencv-python-headless
+onnxruntime
+insightface
