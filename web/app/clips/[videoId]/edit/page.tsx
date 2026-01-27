@@ -112,6 +112,47 @@ export default function ClipEditPage() {
 
   const organizationId = user?.organization_id || ""
 
+  type TimelineItemType = "video" | "subtitle"
+  type TimelineItem = {
+    id: string
+    type: TimelineItemType
+    label: string
+    start: number
+    end: number
+    text?: string
+    track: number
+  }
+
+  const [timelineItems, setTimelineItems] = useState<TimelineItem[]>([])
+  const [tracksCount, setTracksCount] = useState(2)
+  const [selectedTimelineItemId, setSelectedTimelineItemId] = useState<string | null>(null)
+  const [subtitleStyle, setSubtitleStyle] = useState({
+    fontFamily: "Montserrat ExtraBold",
+    color: "#FFFFFF",
+    shadow: true,
+  })
+
+  const [subtitleOverlayPos, setSubtitleOverlayPos] = useState({ x: 50, y: 80 })
+
+  const subtitleDragRef = useRef<{
+    active: boolean
+    startX: number
+    startY: number
+    posX: number
+    posY: number
+  } | null>(null)
+
+  const timelineItemDragRef = useRef<{
+    active: boolean
+    itemId: string
+    mode: "move" | "trim-start" | "trim-end"
+    startClientX: number
+    startClientY: number
+    initialStart: number
+    initialEnd: number
+    initialTrack: number
+  } | null>(null)
+
   const [activeTab, setActiveTab] = useState<"Transcrição" | "Editar Subtítulos">("Transcrição")
   const [search, setSearch] = useState("")
   const [ratio, setRatio] = useState<"9:16" | "1:1" | "16:9">("9:16")
@@ -144,13 +185,9 @@ export default function ClipEditPage() {
 
   const segments: TranscriptSegment[] = trimContext?.transcript?.segments ?? []
 
-  const filteredSegments = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return segments
-    return segments.filter((s) => (s.text || "").toLowerCase().includes(q))
-  }, [segments, search])
-
-  const leftPanelSegments = isTabTranscript ? segments : filteredSegments
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
+  const [editingText, setEditingText] = useState("")
+  const [editedSubtitleTextById, setEditedSubtitleTextById] = useState<Record<string, string>>({})
 
   const previewAspectClass =
     ratio === "9:16" ? "aspect-[9/16]" : ratio === "1:1" ? "aspect-square" : "aspect-video"
@@ -159,6 +196,84 @@ export default function ClipEditPage() {
   const clipStart = clip?.start_time ?? 0
   const clipEnd = clip?.end_time ?? 0
   const clipDuration = Math.max(0, clipEnd - clipStart)
+
+  const segmentKey = (seg: TranscriptSegment) => `subtitle-${seg.start}-${seg.end}`
+
+  const clipSegments = useMemo(() => {
+    if (!Number.isFinite(clipStart) || !Number.isFinite(clipEnd) || clipEnd <= clipStart) return []
+    return segments.filter((s) => {
+      const s0 = Number(s.start)
+      const s1 = Number(s.end)
+      if (!Number.isFinite(s0) || !Number.isFinite(s1)) return false
+      return s1 >= clipStart && s0 <= clipEnd
+    })
+  }, [clipEnd, clipStart, segments])
+
+  const filteredSegments = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return clipSegments
+    return clipSegments.filter((s) => (s.text || "").toLowerCase().includes(q))
+  }, [clipSegments, search])
+
+  const leftPanelSegments = isTabTranscript ? clipSegments : filteredSegments
+
+  const startEditingSegment = (segmentId: string, currentText: string) => {
+    setEditingSegmentId(segmentId)
+    setEditingText(currentText)
+  }
+
+  const commitEditingSegment = () => {
+    if (!editingSegmentId) return
+    const next = editingText
+
+    setEditedSubtitleTextById((prev) => ({ ...prev, [editingSegmentId]: next }))
+    setTimelineItems((prev) => prev.map((it) => (it.id === editingSegmentId && it.type === "subtitle" ? { ...it, text: next } : it)))
+
+    setEditingSegmentId(null)
+  }
+
+  const cancelEditingSegment = () => {
+    setEditingSegmentId(null)
+  }
+
+  useEffect(() => {
+    if (!Number.isFinite(clipStart) || !Number.isFinite(clipEnd) || clipEnd <= clipStart) {
+      setTimelineItems([])
+      setTracksCount(2)
+      return
+    }
+
+    const videoItem: TimelineItem = {
+      id: "video-main",
+      type: "video" as const,
+      label: "Video",
+      start: 0,
+      end: clipDuration,
+      track: 0,
+    }
+
+    const subtitleSegs: TimelineItem[] = (clipSegments || [])
+      .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end))
+      .map((s) => {
+        const startRel = Math.max(0, (s.start ?? 0) - clipStart)
+        const endRel = Math.min(clipDuration, (s.end ?? 0) - clipStart)
+        const segmentId = segmentKey(s)
+        const editedText = editedSubtitleTextById[segmentId]
+        return {
+          id: segmentId,
+          type: "subtitle" as const,
+          label: "Legenda",
+          start: Math.max(0, Math.min(startRel, clipDuration)),
+          end: Math.max(0, Math.min(endRel, clipDuration)),
+          text: (editedText ?? s.text) || "",
+          track: 1,
+        } satisfies TimelineItem
+      })
+      .filter((it) => it.end > it.start)
+
+    setTimelineItems([videoItem, ...subtitleSegs])
+    setTracksCount((prev) => Math.max(prev, 2))
+  }, [clipDuration, clipEnd, clipStart, clipSegments, editedSubtitleTextById])
 
   useEffect(() => {
     const el = previewVideoRef.current
@@ -246,6 +361,222 @@ export default function ClipEditPage() {
       ; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch { }
   }
+
+  const pxToSeconds = (dxPx: number) => {
+    const container = timelineContainerRef.current
+    if (!container) return 0
+    const rect = container.getBoundingClientRect()
+    if (!rect.width || clipDuration <= 0) return 0
+    return (dxPx / rect.width) * clipDuration
+  }
+
+  const clampTime = (t: number) => {
+    if (!Number.isFinite(t)) return 0
+    return Math.max(0, Math.min(clipDuration, t))
+  }
+
+  const startTimelineItemDrag = (
+    e: import("react").PointerEvent,
+    itemId: string,
+    mode: "move" | "trim-start" | "trim-end"
+  ) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    const item = timelineItems.find((it) => it.id === itemId)
+    if (!item) return
+
+    setSelectedTimelineItemId(itemId)
+
+    timelineItemDragRef.current = {
+      active: true,
+      itemId,
+      mode,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      initialStart: item.start,
+      initialEnd: item.end,
+      initialTrack: item.track,
+    }
+
+    try {
+      ; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = timelineItemDragRef.current
+      if (!drag?.active) return
+      if (clipDuration <= 0) return
+
+      const deltaS = pxToSeconds(e.clientX - drag.startClientX)
+
+      const dy = e.clientY - drag.startClientY
+      const trackStepPx = 44
+      let targetTrack = drag.initialTrack
+      if (Math.abs(dy) >= trackStepPx / 2) {
+        const steps = Math.round(dy / trackStepPx)
+        targetTrack = drag.initialTrack + steps
+        if (targetTrack < 0) targetTrack = 0
+      }
+
+      if (targetTrack >= tracksCount) {
+        setTracksCount(targetTrack + 1)
+      }
+
+      setTimelineItems((prev) => {
+        const idx = prev.findIndex((it) => it.id === drag.itemId)
+        if (idx < 0) return prev
+
+        const it = prev[idx]
+        const minLen = 0.2
+
+        let nextStart = drag.initialStart
+        let nextEnd = drag.initialEnd
+
+        if (drag.mode === "move") {
+          const len = drag.initialEnd - drag.initialStart
+          nextStart = clampTime(drag.initialStart + deltaS)
+          nextEnd = clampTime(nextStart + len)
+          if (nextEnd - nextStart < len) {
+            nextStart = clampTime(nextEnd - len)
+          }
+        }
+
+        if (drag.mode === "trim-start") {
+          nextStart = clampTime(drag.initialStart + deltaS)
+          nextStart = Math.min(nextStart, drag.initialEnd - minLen)
+        }
+
+        if (drag.mode === "trim-end") {
+          nextEnd = clampTime(drag.initialEnd + deltaS)
+          nextEnd = Math.max(nextEnd, drag.initialStart + minLen)
+        }
+
+        const nextItem = { ...it, start: nextStart, end: nextEnd, track: targetTrack }
+        const out = prev.slice()
+        out[idx] = nextItem
+        return out
+      })
+    }
+
+    const onUp = () => {
+      if (timelineItemDragRef.current) timelineItemDragRef.current.active = false
+      timelineItemDragRef.current = null
+    }
+
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [clipDuration])
+
+  const selectedSubtitleItem = useMemo(() => {
+    if (!selectedTimelineItemId) return null
+    const it = timelineItems.find((s) => s.id === selectedTimelineItemId)
+    return it && it.type === "subtitle" ? it : null
+  }, [selectedTimelineItemId, timelineItems])
+
+  const activeSubtitleForPreview = useMemo(() => {
+    const t = relativeTime
+    const subs = timelineItems.filter((it) => it.type === "subtitle")
+    const found = subs.find((s) => t >= s.start && t <= s.end)
+    return found || null
+  }, [relativeTime, timelineItems])
+
+  const startSubtitleOverlayDrag = (e: import("react").PointerEvent) => {
+    if (!activeSubtitleForPreview) return
+    if (e.button !== 0) return
+    const container = previewContainerRef.current
+    if (!container) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    subtitleDragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      posX: subtitleOverlayPos.x,
+      posY: subtitleOverlayPos.y,
+    }
+  }
+
+  const handleSplitSelected = () => {
+    if (!selectedTimelineItemId) return
+    if (clipDuration <= 0) return
+
+    setTimelineItems((prev) => {
+      const idx = prev.findIndex((it) => it.id === selectedTimelineItemId)
+      if (idx < 0) return prev
+
+      const it = prev[idx]
+      const t = Math.max(0, Math.min(clipDuration, relativeTime))
+      const minLen = 0.2
+
+      if (t <= it.start + minLen) return prev
+      if (t >= it.end - minLen) return prev
+
+      const left: TimelineItem = {
+        ...it,
+        end: t,
+      }
+      const right: TimelineItem = {
+        ...it,
+        id: `${it.id}-split-${Math.floor(t * 1000)}`,
+        start: t,
+      }
+
+      const out = prev.slice()
+      out.splice(idx, 1, left, right)
+      return out
+    })
+  }
+
+  const handleCyclePlaybackRate = () => {
+    const rates: Array<0.5 | 0.75 | 1 | 1.25 | 1.5 | 2> = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    const idx = rates.indexOf(playbackRate)
+    const next = rates[(idx + 1) % rates.length]
+    setPlaybackRate(next)
+  }
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const container = previewContainerRef.current
+      const drag = subtitleDragRef.current
+      if (!container || !drag?.active) return
+
+      const rect = container.getBoundingClientRect()
+      const dx = e.clientX - drag.startX
+      const dy = e.clientY - drag.startY
+
+      const dxPct = rect.width > 0 ? (dx / rect.width) * 100 : 0
+      const dyPct = rect.height > 0 ? (dy / rect.height) * 100 : 0
+
+      const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+      setSubtitleOverlayPos({
+        x: clamp(drag.posX + dxPct, 0, 100),
+        y: clamp(drag.posY + dyPct, 0, 100),
+      })
+    }
+
+    const onUp = () => {
+      if (subtitleDragRef.current) subtitleDragRef.current.active = false
+      subtitleDragRef.current = null
+    }
+
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [subtitleOverlayPos.x, subtitleOverlayPos.y, selectedSubtitleItem])
 
   useEffect(() => {
     const el = previewVideoRef.current
@@ -663,15 +994,39 @@ export default function ClipEditPage() {
               <ScrollArea ref={leftScrollRef} className="h-full">
                 <div className="p-3">
                   {isTabTranscript ? (
-                    segments.length === 0 ? (
+                    clipSegments.length === 0 ? (
                       <div className="text-sm text-muted-foreground py-10 text-center">Nenhum trecho encontrado.</div>
                     ) : (
                       <div className="divide-y divide-border">
-                        {(search.trim() ? filteredSegments : segments).map((seg, idx) => (
-                          <div key={`${seg.start}-${idx}`} className="py-3">
-                            <div className="text-sm text-foreground/90 leading-relaxed">{seg.text}</div>
-                          </div>
-                        ))}
+                        {(search.trim() ? filteredSegments : clipSegments).map((seg, idx) => {
+                          const segmentId = segmentKey(seg)
+                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
+                          const isEditing = editingSegmentId === segmentId
+                          return (
+                            <div key={`${seg.start}-${idx}`} className="py-3">
+                              {isEditing ? (
+                                <Input
+                                  value={editingText}
+                                  onChange={(e) => setEditingText(e.target.value)}
+                                  onBlur={commitEditingSegment}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") commitEditingSegment()
+                                    if (e.key === "Escape") cancelEditingSegment()
+                                  }}
+                                  className="h-10"
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  className="text-sm text-foreground/90 leading-relaxed"
+                                  onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
+                                >
+                                  {textValue}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )
                   ) : (
@@ -679,32 +1034,85 @@ export default function ClipEditPage() {
                       <div className="text-sm text-muted-foreground py-10 text-center">Nenhum trecho encontrado.</div>
                     ) : subtitleMode === "Sentence" ? (
                       <div className="divide-y divide-border">
-                        {leftPanelSegments.map((seg, idx) => (
-                          <div key={`${seg.start}-${idx}`} className="py-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="w-28 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
-                                {formatTimeRangeLabel(seg.start)} - {formatTimeRangeLabel(seg.end)}
+                        {leftPanelSegments.map((seg, idx) => {
+                          const segmentId = segmentKey(seg)
+                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
+                          const isEditing = editingSegmentId === segmentId
+                          return (
+                            <div key={`${seg.start}-${idx}`} className="py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="w-28 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
+                                  {formatTimeRangeLabel(seg.start)} - {formatTimeRangeLabel(seg.end)}
+                                </div>
+                                <div className="flex-1">
+                                  {isEditing ? (
+                                    <Input
+                                      value={editingText}
+                                      onChange={(e) => setEditingText(e.target.value)}
+                                      onBlur={commitEditingSegment}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") commitEditingSegment()
+                                        if (e.key === "Escape") cancelEditingSegment()
+                                      }}
+                                      className="h-10"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <div
+                                      className="text-sm text-foreground/90 leading-relaxed"
+                                      onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
+                                    >
+                                      {textValue}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex-1 text-sm text-foreground/90 leading-relaxed">{seg.text}</div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     ) : (
                       <div className="divide-y divide-border">
-                        {leftPanelSegments.map((seg, idx) => (
-                          <div key={`${seg.start}-${idx}`} className="py-3">
-                            <div className="flex items-start gap-3">
-                              <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
-                                {formatTimeLabel(seg.start)}
+                        {leftPanelSegments.map((seg, idx) => {
+                          const segmentId = segmentKey(seg)
+                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
+                          const isEditing = editingSegmentId === segmentId
+                          return (
+                            <div key={`${seg.start}-${idx}`} className="py-3">
+                              <div className="flex items-start gap-3">
+                                <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
+                                  {formatTimeLabel(seg.start)}
+                                </div>
+                                <div className="flex-1">
+                                  {isEditing ? (
+                                    <Input
+                                      value={editingText}
+                                      onChange={(e) => setEditingText(e.target.value)}
+                                      onBlur={commitEditingSegment}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") commitEditingSegment()
+                                        if (e.key === "Escape") cancelEditingSegment()
+                                      }}
+                                      className="h-10"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <div
+                                      className="text-sm text-foreground/90 leading-relaxed"
+                                      onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
+                                    >
+                                      {textValue}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-sm text-foreground/90 leading-relaxed">{seg.text}</div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )
-                  )}
+                  )
+                )}
                 </div>
               </ScrollArea>
             </div>
@@ -712,109 +1120,190 @@ export default function ClipEditPage() {
 
           {/* Center */}
           <div className="flex-1 flex-col p-2 flex items-center justify-center min-h-0">
-            <div
-              className={"relative w-[400px] max-h-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer " + previewAspectClass}
-              ref={previewContainerRef}
-              onClick={() => setIsPreviewSelected((v) => !v)}
-            >
-              {isPreviewSelected ? (
-                <div
-                  className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-accent rounded-full px-2 py-1 flex items-center gap-1 border border-border"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Button variant="ghost" className="h-8 px-2 gap-2">
-                    <HugeiconsIcon icon={GeometricShapes01Icon} size={18} />
-                  </Button>
+            <div className="w-full flex items-center justify-center gap-4">
+              <div
+                className={"relative w-[400px] max-h-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer " + previewAspectClass}
+                ref={previewContainerRef}
+                onClick={() => setIsPreviewSelected((v) => !v)}
+              >
+                {isPreviewSelected ? (
+                  <div
+                    className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-accent rounded-full px-2 py-1 flex items-center gap-1 border border-border"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Button variant="ghost" className="h-8 px-2 gap-2">
+                      <HugeiconsIcon icon={GeometricShapes01Icon} size={18} />
+                    </Button>
 
-                  <Button variant="ghost" size="icon" className="h-8 w-8" title={`Ratio (${ratio})`}>
-                    <HugeiconsIcon icon={BendToolIcon} size={18} />
-                  </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title={`Ratio (${ratio})`}>
+                      <HugeiconsIcon icon={BendToolIcon} size={18} />
+                    </Button>
 
-                  <Button variant="ghost" size="icon" className="h-8 w-8" title="Camada">
-                    <HugeiconsIcon icon={Layers01Icon} size={18} />
-                  </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Camada">
+                      <HugeiconsIcon icon={Layers01Icon} size={18} />
+                    </Button>
 
-                  <Button variant="ghost" size="icon" className="h-8 w-8" title="Deletar camada">
-                    <HugeiconsIcon icon={Delete02Icon} size={18} />
-                  </Button>
-                </div>
-              ) : null}
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Deletar camada">
+                      <HugeiconsIcon icon={Delete02Icon} size={18} />
+                    </Button>
+                  </div>
+                ) : null}
 
-              {fullVideoUrl ? (
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    transform: `rotate(${rotation}deg)`,
-                    transformOrigin: "50% 50%",
-                    willChange: "transform",
-                  }}
-                >
-                  <video
-                    ref={previewVideoRef}
-                    src={fullVideoUrl}
-                    className="w-full h-full object-cover"
-                    onPointerDown={onVideoPointerDown}
+                {fullVideoUrl ? (
+                  <div
+                    className="absolute inset-0"
                     style={{
-                      clipPath: `inset(${cropRect.y}% ${100 - (cropRect.x + cropRect.w)}% ${100 - (cropRect.y + cropRect.h)}% ${cropRect.x}%)`,
-                      objectPosition: `${50 + videoPan.x}% ${50 + videoPan.y}%`,
+                      transform: `rotate(${rotation}deg)`,
+                      transformOrigin: "50% 50%",
+                      willChange: "transform",
                     }}
-                  />
-
-                  {isPreviewSelected ? (
-                    <div
-                      ref={cropOverlayRef}
-                      className="absolute z-10 border-2 border-primary"
+                  >
+                    <video
+                      ref={previewVideoRef}
+                      src={fullVideoUrl}
+                      className="w-full h-full object-cover"
+                      onPointerDown={onVideoPointerDown}
                       style={{
-                        left: `${cropRect.x}%`,
-                        top: `${cropRect.y}%`,
-                        width: `${cropRect.w}%`,
-                        height: `${cropRect.h}%`,
-                        pointerEvents: "none",
+                        clipPath: `inset(${cropRect.y}% ${100 - (cropRect.x + cropRect.w)}% ${100 - (cropRect.y + cropRect.h)}% ${cropRect.x}%)`,
+                        objectPosition: `${50 + videoPan.x}% ${50 + videoPan.y}%`,
                       }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    />
+
+                    {activeSubtitleForPreview ? (
                       <div
-                        onPointerDown={startRotateDrag}
-                        className="absolute size-3 bg-white border border-border rounded-full"
+                        className="absolute z-20 px-4 py-2 text-center select-none"
                         style={{
-                          left: "50%",
-                          top: "-18px",
+                          left: `${subtitleOverlayPos.x}%`,
+                          top: `${subtitleOverlayPos.y}%`,
                           transform: "translate(-50%, -50%)",
+                          fontFamily: subtitleStyle.fontFamily,
+                          color: subtitleStyle.color,
+                          textShadow: subtitleStyle.shadow
+                            ? "0px 2px 8px rgba(0,0,0,0.85)"
+                            : "none",
                           cursor: "grab",
                           pointerEvents: "auto",
+                          maxWidth: "90%",
+                          fontWeight: 800,
+                          fontSize: 34,
+                          lineHeight: 1.15,
+                          whiteSpace: "pre-wrap",
                         }}
-                        title="Rotate"
-                      />
+                        onPointerDown={(e) => {
+                          setSelectedTimelineItemId(activeSubtitleForPreview.id)
+                          startSubtitleOverlayDrag(e)
+                        }}
+                      >
+                        {activeSubtitleForPreview.text}
+                      </div>
+                    ) : null}
 
-                      {([
-                        { key: "nw", x: 0, y: 0, cursor: "nwse-resize" },
-                        { key: "n", x: 50, y: 0, cursor: "ns-resize" },
-                        { key: "ne", x: 100, y: 0, cursor: "nesw-resize" },
-                        { key: "e", x: 100, y: 50, cursor: "ew-resize" },
-                        { key: "se", x: 100, y: 100, cursor: "nwse-resize" },
-                        { key: "s", x: 50, y: 100, cursor: "ns-resize" },
-                        { key: "sw", x: 0, y: 100, cursor: "nesw-resize" },
-                        { key: "w", x: 0, y: 50, cursor: "ew-resize" },
-                      ] as const).map((h) => (
+                    {isPreviewSelected ? (
+                      <div
+                        ref={cropOverlayRef}
+                        className="absolute z-10 border-2 border-primary"
+                        style={{
+                          left: `${cropRect.x}%`,
+                          top: `${cropRect.y}%`,
+                          width: `${cropRect.w}%`,
+                          height: `${cropRect.h}%`,
+                          pointerEvents: "none",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div
-                          key={h.key}
-                          onPointerDown={(e) => startCropDrag(h.key, e)}
-                          className="absolute size-2.5 bg-white border border-border rounded-sm"
+                          onPointerDown={startRotateDrag}
+                          className="absolute size-3 bg-white border border-border rounded-full"
                           style={{
-                            left: `${h.x}%`,
-                            top: `${h.y}%`,
+                            left: "50%",
+                            top: "-18px",
                             transform: "translate(-50%, -50%)",
-                            cursor: h.cursor,
+                            cursor: "grab",
                             pointerEvents: "auto",
                           }}
+                          title="Rotate"
                         />
-                      ))}
+
+                        {([
+                          { key: "nw", x: 0, y: 0, cursor: "nwse-resize" },
+                          { key: "n", x: 50, y: 0, cursor: "ns-resize" },
+                          { key: "ne", x: 100, y: 0, cursor: "nesw-resize" },
+                          { key: "e", x: 100, y: 50, cursor: "ew-resize" },
+                          { key: "se", x: 100, y: 100, cursor: "nwse-resize" },
+                          { key: "s", x: 50, y: 100, cursor: "ns-resize" },
+                          { key: "sw", x: 0, y: 100, cursor: "nesw-resize" },
+                          { key: "w", x: 0, y: 50, cursor: "ew-resize" },
+                        ] as const).map((h) => (
+                          <div
+                            key={h.key}
+                            onPointerDown={(e) => startCropDrag(h.key, e)}
+                            className="absolute size-2.5 bg-white border border-border rounded-sm"
+                            style={{
+                              left: `${h.x}%`,
+                              top: `${h.y}%`,
+                              transform: "translate(-50%, -50%)",
+                              cursor: h.cursor,
+                              pointerEvents: "auto",
+                            }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground text-sm">Preview</span>
+                )}
+              </div>
+
+              {selectedSubtitleItem ? (
+                <div className="w-[260px] shrink-0 rounded-lg border border-border bg-background p-3">
+                  <div className="text-sm font-medium mb-3">Legenda</div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Fonte</div>
+                      <Select
+                        value={subtitleStyle.fontFamily}
+                        onValueChange={(v) => setSubtitleStyle((s) => ({ ...s, fontFamily: v }))}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Montserrat ExtraBold">Montserrat ExtraBold</SelectItem>
+                          <SelectItem value="Montserrat">Montserrat</SelectItem>
+                          <SelectItem value="Inter">Inter</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  ) : null}
+
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Cor</div>
+                      <Input
+                        value={subtitleStyle.color}
+                        onChange={(e) => setSubtitleStyle((s) => ({ ...s, color: e.target.value }))}
+                        className="h-9"
+                        placeholder="#FFFFFF"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      className={
+                        "h-9 w-full rounded-md border border-border text-sm " +
+                        (subtitleStyle.shadow ? "bg-accent" : "bg-transparent hover:bg-accent")
+                      }
+                      onClick={() => setSubtitleStyle((s) => ({ ...s, shadow: !s.shadow }))}
+                    >
+                      Sombra: {subtitleStyle.shadow ? "On" : "Off"}
+                    </button>
+
+                    <div className="text-xs text-muted-foreground">
+                      {formatTimeRangeLabel(selectedSubtitleItem.start)} - {formatTimeRangeLabel(selectedSubtitleItem.end)}
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <span className="text-muted-foreground text-sm">Preview</span>
-              )}
+              ) : null}
             </div>
 
             <div className="mt-3 flex items-center justify-center gap-2 w-full">
@@ -847,20 +1336,6 @@ export default function ClipEditPage() {
 
           {/* Right panel */}
           <div className="overflow-hidden p-2 w-[80px]">
-            <div className="flex flex-col gap-8 mt-3">
-              <button className="flex flex-col justify-center items-center">
-                <HugeiconsIcon icon={MagicWand01Icon} size={18} />
-                <span className="text-xs">AI Tools</span>
-              </button>
-              <button className="flex flex-col justify-center items-center">
-                <HugeiconsIcon icon={TextSquareIcon} size={18} />
-                <span className="text-xs">Text</span>
-              </button>
-              <button className="flex flex-col justify-center items-center">
-                <HugeiconsIcon icon={SubtitleIcon} size={18} />
-                <span className="text-xs">Subtitles</span>
-              </button>
-            </div>
           </div>
         </div>
 
@@ -881,25 +1356,18 @@ export default function ClipEditPage() {
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <Select
-                value={String(playbackRate)}
-                onValueChange={(v) => setPlaybackRate(Number(v) as any)}
+              <button
+                type="button"
+                onClick={handleCyclePlaybackRate}
+                className="h-8 px-2 rounded-md bg-transparent border border-border text-sm hover:bg-accent"
+                title="Velocidade"
               >
-                <SelectTrigger className="h-8 w-fit rounded-md bg-transparent border border-border px-2 text-sm">
-                  <SelectValue>{`${playbackRate}x`}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0.5">0.5x</SelectItem>
-                  <SelectItem value="0.75">0.75x</SelectItem>
-                  <SelectItem value="1">1x</SelectItem>
-                  <SelectItem value="1.25">1.25x</SelectItem>
-                  <SelectItem value="1.5">1.5x</SelectItem>
-                  <SelectItem value="2">2x</SelectItem>
-                </SelectContent>
-              </Select>
+                {playbackRate}x
+              </button>
 
               <button
                 type="button"
+                onClick={handleSplitSelected}
                 className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-accent"
                 title="Split"
               >
@@ -965,48 +1433,54 @@ export default function ClipEditPage() {
                   </div>
 
                   <div className="px-2 py-2 space-y-2">
-                    <div className="h-8 relative">
-                      <div
-                        className="h-8 rounded-md bg-[#7DD3FC] border border-border flex items-center px-2 text-xs"
-                        style={{ width: "100%" }}
-                      >
-                        <span className="text-[#083344] font-medium">Video</span>
-                      </div>
-                    </div>
+                    {Array.from({ length: tracksCount }).map((_, trackIdx) => {
+                      const items = timelineItems.filter((it) => it.track === trackIdx)
+                      const trackLabel = trackIdx === 0 ? "Video" : trackIdx === 1 ? "Legendas" : `Track ${trackIdx + 1}`
 
-                    <div className="flex flex-row gap-1">
-                      {(segments.length === 0 ? ["Add Text", "Add Text", "Subtitle"] : segments.slice(0, 40)).map((item, idx) => {
-                        const label = typeof item === "string" ? item : (item.text || "")
-                        const start = typeof item === "string" ? null : item.start
-                        const end = typeof item === "string" ? null : item.end
+                      return (
+                        <div key={`track-${trackIdx}`} className="flex items-center gap-2">
+                          <div className="w-20 shrink-0 text-[10px] text-muted-foreground">{trackLabel}</div>
+                          <div className="flex-1 h-10 relative rounded-md border border-border bg-background/40">
+                            {items.map((it) => {
+                              const leftPct = clipDuration > 0 ? (it.start / clipDuration) * 100 : 0
+                              const widthPct = clipDuration > 0 ? Math.max(1, ((it.end - it.start) / clipDuration) * 100) : 0
+                              const isSelected = selectedTimelineItemId === it.id
+                              const base = it.type === "video" ? "bg-[#7DD3FC]" : "bg-[#FFE46E]"
+                              const textColor = it.type === "video" ? "text-[#083344]" : "text-[#504720]"
 
-                        const widthPct =
-                          start !== null && end !== null && clipDuration > 0
-                            ? `${Math.max(3, ((end - start) / clipDuration) * 100)}%`
-                            : "120px"
+                              return (
+                                <div
+                                  key={it.id}
+                                  className={
+                                    "absolute top-1 bottom-1 rounded-md border text-xs px-2 flex items-center gap-2 select-none " +
+                                    base +
+                                    (isSelected ? " border-foreground/40" : " border-border")
+                                  }
+                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                  onPointerDown={(e) => startTimelineItemDrag(e, it.id, "move")}
+                                >
+                                  <div
+                                    className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize"
+                                    onPointerDown={(e) => startTimelineItemDrag(e, it.id, "trim-start")}
+                                  />
+                                  <div
+                                    className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize"
+                                    onPointerDown={(e) => startTimelineItemDrag(e, it.id, "trim-end")}
+                                  />
 
-                        return (
-                          <div
-                            key={`${label}-${idx}`}
-                            className="h-8 max-w-fit rounded-md bg-[#FFE46E] border border-border flex items-center px-2 text-xs shrink-0"
-                            style={{ width: widthPct }}
-                          >
-                            {start === null ? (
-                              <span className={label === "Subtitle" ? "text-[#504720] font-medium" : "text-[#504720]"}>
-                                {label}
-                              </span>
-                            ) : (
-                              <div className="flex items-center w-full gap-2 min-w-0">
-                                <span className="text-[10px] tabular-nums text-[#504720] shrink-0">
-                                  {formatTimeLabel(start)}
-                                </span>
-                                <span className="text-xs text-[#504720] truncate">{label}</span>
-                              </div>
-                            )}
+                                  <span className={"text-[10px] tabular-nums shrink-0 " + textColor}>
+                                    {formatTimeLabel(it.start)}
+                                  </span>
+                                  <span className={"truncate " + textColor}>
+                                    {it.type === "video" ? "Video" : (it.text || "Legenda")}
+                                  </span>
+                                </div>
+                              )
+                            })}
                           </div>
-                        )
-                      })}
-                    </div>
+                        </div>
+                      )
+                    })}
                   </div>
 
 

@@ -10,6 +10,7 @@ export type User = {
   email: string
   onboarding_completed?: boolean
   current_organization?: Organization | null
+  organization_id?: string
 }
 
 export type LoginPayload = {

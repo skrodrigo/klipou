@@ -15,7 +15,7 @@ DEFAULT_MAX_CHARS_PER_LINE = 25
 DEFAULT_MIN_KARAOKE_CS = 1
 DEFAULT_FONT_NAME = "Montserrat ExtraBold"
 DEFAULT_FONT_SIZE = 60
-DEFAULT_MARGIN_V = 150
+DEFAULT_MARGIN_V = 650
 
 
 def _get_config(key: str, default: Any, type_cast=None) -> Any:

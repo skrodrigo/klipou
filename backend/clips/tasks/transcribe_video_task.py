@@ -414,10 +414,8 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
             "1) NÃO altere timestamps. Eles já estão corretos. Você só pode reescrever o campo \"text\".\n"
             "2) Preserve o sentido original e o tom. Não censure palavrões; apenas corrija grafia/termos.\n"
             "3) Seja conservador: se não tiver certeza da correção, mantenha o original.\n"
-            "4) Não invente conteúdo que não foi falado.\n"
-            "5) Retorne SOMENTE JSON conforme o schema.\n\n"
-            "Entrada: lista de segmentos com índice i e seus textos.\n"
-            "Saída: para cada i, retorne \"text\" revisado."
+            "4) Do not invent content.\n"
+            "5) Return ONLY JSON matching the schema."
     )
 
     base_prompt_en = (
@@ -438,6 +436,11 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
     temperature = float(getattr(settings, "GEMINI_REFINE_TEMPERATURE", 0.2) or 0.2)
 
     out_segments = list(segments)
+
+    def _tokens_from_text(text: str) -> list[str]:
+        if not isinstance(text, str):
+            return []
+        return [t for t in (text or "").strip().split() if t]
 
     refined_domain = None
     refined_language = None
@@ -494,10 +497,31 @@ def _refine_transcript_with_gemini(transcript_data: dict) -> dict:
         for i in range(start_idx, min(start_idx + batch_size, total)):
             new_text = by_i.get(i)
             if isinstance(new_text, str) and new_text.strip():
-                out_segments[i] = {
-                    **out_segments[i],
+                original_seg = out_segments[i] if isinstance(out_segments[i], dict) else {}
+                merged_seg = {
+                    **original_seg,
                     "text": new_text.strip(),
                 }
+
+                try:
+                    original_words = original_seg.get("words") if isinstance(original_seg, dict) else None
+                    if isinstance(original_words, list) and original_words:
+                        new_tokens = _tokens_from_text(new_text)
+                        if len(new_tokens) == len(original_words):
+                            updated_words = []
+                            for w_idx, w in enumerate(original_words):
+                                if isinstance(w, dict):
+                                    updated_words.append({
+                                        **w,
+                                        "word": new_tokens[w_idx],
+                                    })
+                                else:
+                                    updated_words.append(w)
+                            merged_seg["words"] = updated_words
+                except Exception:
+                    pass
+
+                out_segments[i] = merged_seg
                 refined_count += 1
 
     full_text = " ".join([(s.get("text") or "").strip() for s in out_segments]).strip()

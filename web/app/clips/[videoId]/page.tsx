@@ -14,8 +14,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import { use, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { PublishSheet } from "./components/publish-sheet"
-import { ClipCard } from "./components/clip-card"
+import { PublishSheet } from "./_components/publish-sheet"
+import { ClipCard } from "./_components/clip-card"
 
 type ClipsPageProps = {
   params: Promise<{
