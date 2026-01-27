@@ -10,6 +10,7 @@ from .views.clip_views import download_clip, delete_clip, submit_clip_feedback, 
 from .views.trim_views import get_video_trim_context, update_clip_trim
 from .views.stripe_webhook_view import stripe_webhook
 from .views.schedule_views import list_schedules, create_schedule, update_schedule, cancel_schedule
+from .views.calendar_views import list_available_clips
 from .views.integration_views import list_integrations, connect_integration, oauth_callback, disconnect_integration
 from .views.organization_views import create_organization, get_organization, update_organization, get_organization_credits
 from .views.admin_views import reprocess_job, cancel_job, adjust_credits, get_job_failures, get_step_statistics
@@ -66,6 +67,13 @@ urlpatterns = [
     path("schedules/", create_schedule, name="create-schedule"),
     path("schedules/<uuid:schedule_id>/", update_schedule, name="update-schedule"),
     path("schedules/<uuid:schedule_id>/cancel/", cancel_schedule, name="cancel-schedule"),
+
+    # Calendar helpers
+    path(
+        "organizations/<uuid:organization_id>/calendar/clips/",
+        list_available_clips,
+        name="list-available-clips",
+    ),
     
     # Integrations
     path("organizations/<uuid:organization_id>/integrations/", list_integrations, name="list-integrations"),

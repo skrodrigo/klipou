@@ -45,6 +45,7 @@ export interface EventCalendarProps {
   onEventAdd?: (event: CalendarEvent) => void;
   onEventUpdate?: (event: CalendarEvent) => void;
   onEventDelete?: (eventId: string) => void;
+  availableClips?: Array<{ clip_id: string; title: string }>;
   className?: string;
   initialView?: CalendarView;
 }
@@ -54,6 +55,7 @@ export function EventCalendar({
   onEventAdd,
   onEventUpdate,
   onEventDelete,
+  availableClips = [],
   className,
   initialView = "month",
 }: EventCalendarProps) {
@@ -390,6 +392,7 @@ export function EventCalendar({
         <EventDialog
           event={selectedEvent}
           isOpen={isEventDialogOpen}
+          availableClips={availableClips}
           onClose={() => {
             setIsEventDialogOpen(false);
             setSelectedEvent(null);

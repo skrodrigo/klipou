@@ -9,6 +9,11 @@ export interface CalendarEvent {
   allDay?: boolean;
   color?: EventColor;
   location?: string;
+  meta?: {
+    schedule_id?: string;
+    clip_id?: string;
+    platform?: string;
+  };
 }
 
 export type EventColor =

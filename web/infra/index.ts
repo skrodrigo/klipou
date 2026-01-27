@@ -24,3 +24,6 @@ export * from "./admin/admin";
 
 // Videos (existing)
 export * from "./videos/videos";
+
+// Schedules / Calendar
+export * from "./schedules";

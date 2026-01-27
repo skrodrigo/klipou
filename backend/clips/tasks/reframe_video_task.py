@@ -50,8 +50,13 @@ def _get_insightface_app() -> FaceAnalysis:
     det_size = int(max(320, min(det_size, 2048)))
     ctx_id = int(_get_config("INSIGHTFACE_CTX_ID", -1, int) or -1)
 
-    app = FaceAnalysis(name=model_name)
-    app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size))
+    providers_raw = _get_config("INSIGHTFACE_PROVIDERS", "CPUExecutionProvider", str)
+    providers = [p.strip() for p in (providers_raw or "").split(",") if p.strip()]
+    if not providers:
+        providers = ["CPUExecutionProvider"]
+
+    app = FaceAnalysis(name=model_name, allowed_modules=["detection"])
+    app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size), providers=providers)
     _INSIGHTFACE_APP = app
     return _INSIGHTFACE_APP
 

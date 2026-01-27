@@ -50,7 +50,7 @@ export default function ClipsPage({ params }: ClipsPageProps) {
     queryFn: getSession,
   })
 
-  const organizationId = user?.organization?.organization_id ?? user?.organization_id ?? ""
+  const organizationId = user?.current_organization?.organization_id ?? user?.organization_id ?? ""
 
   const { data: clips = [], isLoading: loading } = useQuery({
     queryKey: ["video-clips", videoId],

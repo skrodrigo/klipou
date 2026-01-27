@@ -97,31 +97,23 @@ export default function ProfilePage() {
             </div>
 
             <div className="space-y-4">
-
-              {user?.organization ? (
+              {user?.current_organization ? (
                 <div className="space-y-3">
                   <div className="flex items-center gap-3">
                     <div
                       className="size-10 rounded-md border border-border flex items-center justify-center text-white font-bold"
-                      style={{ backgroundColor: user.organization.color }}
+                      style={{ backgroundColor: user.current_organization.color ?? undefined }}
                     >
-                      {user.organization.name.charAt(0).toUpperCase()}
+                      {user.current_organization.name.charAt(0).toUpperCase()}
                     </div>
                     <div>
                       <div className="text-sm text-muted-foreground">Nome</div>
-                      <div className="text-base font-medium">{user.organization.name}</div>
+                      <div className="text-base font-medium">{user.current_organization.name}</div>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-sm text-muted-foreground">Plano</div>
-                      <div className="text-base font-medium">{user.organization.plan}</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-muted-foreground">Créditos disponíveis</div>
-                      <div className="text-base font-medium">{user.organization.credits_available}</div>
-                    </div>
+                  <div>
+                    <div className="text-sm text-muted-foreground">Créditos disponíveis</div>
+                    <div className="text-base font-medium">{user.current_organization.credits_available}</div>
                   </div>
                 </div>
               ) : (

@@ -43,6 +43,7 @@ import type { CalendarEvent, EventColor } from "./types";
 interface EventDialogProps {
   event: CalendarEvent | null;
   isOpen: boolean;
+  availableClips?: Array<{ clip_id: string; title: string }>;
   onClose: () => void;
   onSave: (event: CalendarEvent) => void;
   onDelete: (eventId: string) => void;
@@ -51,6 +52,7 @@ interface EventDialogProps {
 export function EventDialog({
   event,
   isOpen,
+  availableClips = [],
   onClose,
   onSave,
   onDelete,
@@ -64,6 +66,8 @@ export function EventDialog({
   const [allDay, setAllDay] = useState(false);
   const [location, setLocation] = useState("");
   const [color, setColor] = useState<EventColor>("sky");
+  const [clipId, setClipId] = useState<string>("");
+  const [platform, setPlatform] = useState<string>("tiktok");
   const [error, setError] = useState<string | null>(null);
   const [startDateOpen, setStartDateOpen] = useState(false);
   const [endDateOpen, setEndDateOpen] = useState(false);
@@ -107,11 +111,15 @@ export function EventDialog({
       setAllDay(event.allDay || false);
       setLocation(event.location || "");
       setColor((event.color as EventColor) || "sky");
+      setClipId(event.meta?.clip_id || "");
+      setPlatform(event.meta?.platform || "tiktok");
       setError(null); // Reset error when opening dialog
     } else {
       resetForm();
+      setClipId(availableClips[0]?.clip_id || "");
+      setPlatform("tiktok");
     }
-  }, [event, formatTimeForInput, resetForm]);
+  }, [event, formatTimeForInput, resetForm, availableClips]);
 
   // Memoize time options so they're only calculated once
   const timeOptions = useMemo(() => {
@@ -166,7 +174,9 @@ export function EventDialog({
     }
 
     // Use generic title if empty
-    const eventTitle = title.trim() ? title : "(no title)";
+    const clipTitle = availableClips.find((c) => c.clip_id === clipId)?.title;
+    const defaultTitle = clipTitle ? `[${platform}] ${clipTitle}` : `[${platform}] Post`;
+    const eventTitle = title.trim() ? title : defaultTitle;
 
     onSave({
       allDay,
@@ -175,6 +185,11 @@ export function EventDialog({
       end,
       id: event?.id || "",
       location,
+      meta: {
+        ...(event?.meta ?? {}),
+        clip_id: clipId,
+        platform,
+      },
       start,
       title: eventTitle,
     });
@@ -248,6 +263,41 @@ export function EventDialog({
           </div>
         )}
         <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="*:not-first:mt-1.5">
+              <Label>Clip</Label>
+              <Select value={clipId} onValueChange={(v) => setClipId(v ?? clipId)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableClips.map((c) => (
+                    <SelectItem key={c.clip_id} value={c.clip_id}>
+                      {c.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="*:not-first:mt-1.5">
+              <Label>Plataforma</Label>
+              <Select value={platform} onValueChange={(v) => setPlatform(v ?? platform)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tiktok">TikTok</SelectItem>
+                  <SelectItem value="instagram">Instagram</SelectItem>
+                  <SelectItem value="youtube">YouTube</SelectItem>
+                  <SelectItem value="facebook">Facebook</SelectItem>
+                  <SelectItem value="linkedin">LinkedIn</SelectItem>
+                  <SelectItem value="twitter">X (Twitter)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="*:not-first:mt-1.5">
             <Label htmlFor="title">Title</Label>
             <Input
@@ -319,7 +369,7 @@ export function EventDialog({
             {!allDay && (
               <div className="min-w-28 *:not-first:mt-1.5">
                 <Label htmlFor="start-time">Start Time</Label>
-                <Select value={startTime} >
+                <Select value={startTime} onValueChange={(v) => setStartTime(v ?? startTime)}>
                   <SelectTrigger id="start-time">
                     <SelectValue />
                   </SelectTrigger>
@@ -384,7 +434,7 @@ export function EventDialog({
             {!allDay && (
               <div className="min-w-28 *:not-first:mt-1.5">
                 <Label htmlFor="end-time">End Time</Label>
-                <Select value={endTime}>
+                <Select value={endTime} onValueChange={(v) => setEndTime(v ?? endTime)}>
                   <SelectTrigger id="end-time">
                     <SelectValue />
                   </SelectTrigger>

@@ -8,7 +8,7 @@ from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
-from ..models import Video, Clip, Transcript, Organization
+from ..models import Video, Clip, Transcript, Organization, Job, Schedule
 from .job_utils import update_job_status
 from ..services.storage_service import R2StorageService
 
@@ -96,7 +96,16 @@ def clip_generation_task(self, video_id: str) -> dict:
         
         video = Video.objects.get(video_id=video_id)
         org = Organization.objects.get(organization_id=video.organization_id)
-        
+
+        job = (
+            Job.objects.filter(video_id=video.video_id, organization_id=video.organization_id)
+            .order_by("-created_at")
+            .first()
+        )
+        job_config = (job.configuration if job and isinstance(job.configuration, dict) else {})
+        auto_schedule = bool(job_config.get("autoSchedule") or job_config.get("auto_schedule"))
+        auto_platform = str(job_config.get("auto_schedule_platform") or "tiktok")
+
         video.status = "rendering"
         video.current_step = "rendering"
         video.save()
@@ -350,6 +359,7 @@ def clip_generation_task(self, video_id: str) -> dict:
                 try:
                     Clip.objects.create(
                         clip_id=job["clip_uuid"],
+                        job=job if job else None,
                         video=video,
                         title=job["hook_title"],
                         start_time=job["start_time"],
@@ -394,6 +404,41 @@ def clip_generation_task(self, video_id: str) -> dict:
             f"[clip_gen] Concluído para video_id={video_id}: "
             f"{len(generated_clips)} clips gerados, {len(failures)} falhas"
         )
+
+        if auto_schedule:
+            try:
+                created = 0
+                base_time = timezone.now()
+                # agendar a partir do próximo slot de 30 minutos
+                minute = int(base_time.minute)
+                snap = 30
+                add_min = (snap - (minute % snap)) % snap
+                base_time = base_time + timezone.timedelta(minutes=add_min)
+                base_time = base_time.replace(second=0, microsecond=0)
+
+                for i, gc in enumerate(generated_clips):
+                    clip_id_str = gc.get("clip_id")
+                    if not clip_id_str:
+                        continue
+                    try:
+                        clip_obj = Clip.objects.get(clip_id=clip_id_str)
+                    except Exception:
+                        continue
+
+                    scheduled_time = base_time + timezone.timedelta(minutes=60 * i)
+
+                    Schedule.objects.create(
+                        clip=clip_obj,
+                        user_id=getattr(video, "user_id", None) or (job.user_id if job else None),
+                        platform=auto_platform,
+                        scheduled_time=scheduled_time,
+                        status="scheduled",
+                    )
+                    created += 1
+
+                logger.info(f"[clip_gen] Auto-schedule enabled: created {created} schedules")
+            except Exception as e:
+                logger.warning(f"[clip_gen] Auto-schedule failed: {e}")
 
         video.last_successful_step = "rendering"
         video.status = "done"

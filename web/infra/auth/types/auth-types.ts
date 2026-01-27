@@ -3,6 +3,7 @@ export type Organization = {
   organization_id: string
   name: string
   color?: string | null
+  credits_available?: number
 }
 
 export type User = {
@@ -39,6 +40,7 @@ export type RegisterResponse = {
 }
 
 export type UpdateProfilePayload = {
+  email?: string
   name?: string
   onboarding_completed?: boolean
   onboarding_data?: Record<string, unknown>

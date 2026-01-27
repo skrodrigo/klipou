@@ -5,32 +5,20 @@ import { useParams, useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ArrowLeft02Icon,
-  BendToolIcon,
-  ChatTranslate01Icon,
-  ClosedCaptionFreeIcons,
-  Copy02Icon,
-  Delete02Icon,
-  DownloadSquare01Icon,
-  GeometricShapes01Icon,
-  Layers01Icon,
-  MagicWand01Icon,
-  Settings05Icon,
-  SubtitleIcon,
-  TextAlignJustifyCenterIcon,
-  TextSquareIcon
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Pause, Play, Scissors, X } from "lucide-react"
 
 import { getSession } from "@/infra/auth/auth"
 import type { TranscriptSegment } from "@/infra/videos/videos"
 import { getClipDetails, getVideoTrimContext } from "@/infra/videos/videos"
+
+import { LeftPanel } from "./_components/left-panel"
+import { PreviewArea } from "./_components/preview-area"
+import { SubtitleConfigPanel } from "./_components/subtitle-config-panel"
+import { TimelineArea } from "./_components/timeline-area"
+import { TimelineTransportBar } from "./_components/timeline-transport-bar"
 
 function formatTimeLabel(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00"
@@ -74,6 +62,8 @@ export default function ClipEditPage() {
   const leftScrollRef = useRef<HTMLDivElement>(null)
   const previewVideoRef = useRef<HTMLVideoElement>(null)
   const previewContainerRef = useRef<HTMLDivElement>(null)
+  const subtitleConfigRef = useRef<HTMLDivElement>(null)
+  const subtitleOverlayElRef = useRef<HTMLDivElement>(null)
   const timelineScrollRef = useRef<HTMLDivElement>(null)
   const [showLeftTopFade, setShowLeftTopFade] = useState(false)
   const [showLeftBottomFade, setShowLeftBottomFade] = useState(false)
@@ -90,6 +80,10 @@ export default function ClipEditPage() {
   const [isSeeking, setIsSeeking] = useState(false)
 
   const timelineDragRef = useRef<{ active: boolean; startX: number; startTime: number } | null>(null)
+
+  const historyRef = useRef<{ undo: Array<{ items: TimelineItem[]; tracksCount: number }>; redo: Array<{ items: TimelineItem[]; tracksCount: number }> }>(
+    { undo: [], redo: [] }
+  )
 
   const panRef = useRef<{ active: boolean; startX: number; startY: number; panX: number; panY: number } | null>(null)
   const rotateRef = useRef<{ active: boolean; startAngle: number; startRotation: number; cx: number; cy: number } | null>(null)
@@ -151,6 +145,8 @@ export default function ClipEditPage() {
     initialStart: number
     initialEnd: number
     initialTrack: number
+    beforeItems: TimelineItem[]
+    beforeTracksCount: number
   } | null>(null)
 
   const [activeTab, setActiveTab] = useState<"Transcrição" | "Editar Subtítulos">("Transcrição")
@@ -398,6 +394,8 @@ export default function ClipEditPage() {
       initialStart: item.start,
       initialEnd: item.end,
       initialTrack: item.track,
+      beforeItems: timelineItems.map((x) => ({ ...x })),
+      beforeTracksCount: tracksCount,
     }
 
     try {
@@ -457,6 +455,60 @@ export default function ClipEditPage() {
           nextEnd = Math.max(nextEnd, drag.initialStart + minLen)
         }
 
+        const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number) => {
+          return aStart < bEnd && aEnd > bStart
+        }
+
+        const othersOnTargetTrack = prev.filter((x) => x.id !== it.id && x.track === targetTrack)
+
+        if (drag.mode === "move") {
+          const overlapItem = othersOnTargetTrack.find((o) => overlaps(nextStart, nextEnd, o.start, o.end))
+          if (overlapItem) {
+            targetTrack = overlapItem.track + 1
+            if (targetTrack >= tracksCount) {
+              setTracksCount(targetTrack + 1)
+            }
+          }
+        }
+
+        const othersSameTrack = prev.filter((x) => x.id !== it.id && x.track === targetTrack)
+
+        if (drag.mode === "trim-start") {
+          const blockers = othersSameTrack.filter((o) => overlaps(nextStart, nextEnd, o.start, o.end))
+          if (blockers.length) {
+            const maxEnd = Math.max(...blockers.map((b) => b.end))
+            nextStart = Math.min(Math.max(nextStart, maxEnd), nextEnd - minLen)
+          }
+        }
+
+        if (drag.mode === "trim-end") {
+          const blockers = othersSameTrack.filter((o) => overlaps(nextStart, nextEnd, o.start, o.end))
+          if (blockers.length) {
+            const minStart = Math.min(...blockers.map((b) => b.start))
+            nextEnd = Math.max(Math.min(nextEnd, minStart), nextStart + minLen)
+          }
+        }
+
+        if (drag.mode === "move") {
+          const len = drag.initialEnd - drag.initialStart
+          let guard = 0
+          while (guard < 10) {
+            const blocker = othersSameTrack.find((o) => overlaps(nextStart, nextEnd, o.start, o.end))
+            if (!blocker) break
+
+            if (deltaS >= 0) {
+              nextStart = clampTime(blocker.start - len)
+            } else {
+              nextStart = clampTime(blocker.end)
+            }
+            nextEnd = clampTime(nextStart + len)
+            if (nextEnd - nextStart < len) {
+              nextStart = clampTime(nextEnd - len)
+            }
+            guard += 1
+          }
+        }
+
         const nextItem = { ...it, start: nextStart, end: nextEnd, track: targetTrack }
         const out = prev.slice()
         out[idx] = nextItem
@@ -465,7 +517,14 @@ export default function ClipEditPage() {
     }
 
     const onUp = () => {
-      if (timelineItemDragRef.current) timelineItemDragRef.current.active = false
+      const drag = timelineItemDragRef.current
+      if (drag) {
+        drag.active = false
+
+        const undoState = historyRef.current.undo
+        undoState.push({ items: drag.beforeItems, tracksCount: drag.beforeTracksCount })
+        historyRef.current.redo = []
+      }
       timelineItemDragRef.current = null
     }
 
@@ -477,21 +536,39 @@ export default function ClipEditPage() {
     }
   }, [clipDuration])
 
+  const handleUndo = () => {
+    const prev = historyRef.current.undo.pop()
+    if (!prev) return
+    historyRef.current.redo.push({ items: timelineItems.map((x) => ({ ...x })), tracksCount })
+    setTimelineItems(prev.items)
+    setTracksCount(prev.tracksCount)
+    setSelectedTimelineItemId(null)
+  }
+
+  const handleRedo = () => {
+    const next = historyRef.current.redo.pop()
+    if (!next) return
+    historyRef.current.undo.push({ items: timelineItems.map((x) => ({ ...x })), tracksCount })
+    setTimelineItems(next.items)
+    setTracksCount(next.tracksCount)
+    setSelectedTimelineItemId(null)
+  }
+
   const selectedSubtitleItem = useMemo(() => {
     if (!selectedTimelineItemId) return null
     const it = timelineItems.find((s) => s.id === selectedTimelineItemId)
     return it && it.type === "subtitle" ? it : null
   }, [selectedTimelineItemId, timelineItems])
 
-  const activeSubtitleForPreview = useMemo(() => {
+  const activeSubtitlesForPreview = useMemo(() => {
     const t = relativeTime
-    const subs = timelineItems.filter((it) => it.type === "subtitle")
-    const found = subs.find((s) => t >= s.start && t <= s.end)
-    return found || null
+    return timelineItems
+      .filter((it) => it.type === "subtitle" && t >= it.start && t <= it.end)
+      .sort((a, b) => a.track - b.track)
   }, [relativeTime, timelineItems])
 
   const startSubtitleOverlayDrag = (e: import("react").PointerEvent) => {
-    if (!activeSubtitleForPreview) return
+    if (!activeSubtitlesForPreview.length) return
     if (e.button !== 0) return
     const container = previewContainerRef.current
     if (!container) return
@@ -512,15 +589,23 @@ export default function ClipEditPage() {
     if (clipDuration <= 0) return
 
     setTimelineItems((prev) => {
-      const idx = prev.findIndex((it) => it.id === selectedTimelineItemId)
+      const idx = prev.findIndex((p) => p.id === selectedTimelineItemId)
       if (idx < 0) return prev
 
       const it = prev[idx]
-      const t = Math.max(0, Math.min(clipDuration, relativeTime))
+      const activeDrag = timelineDragRef.current
+      const tRaw = activeDrag?.active
+        ? (activeDrag.startTime ?? clipStart) - clipStart
+        : relativeTime
+      const tSnapped = Math.round(tRaw * 100) / 100
+      const t = Math.max(0, Math.min(clipDuration, tSnapped))
       const minLen = 0.2
 
       if (t <= it.start + minLen) return prev
       if (t >= it.end - minLen) return prev
+
+      historyRef.current.undo.push({ items: prev.map((x) => ({ ...x })), tracksCount })
+      historyRef.current.redo = []
 
       const left: TimelineItem = {
         ...it,
@@ -537,6 +622,46 @@ export default function ClipEditPage() {
       return out
     })
   }
+
+  useEffect(() => {
+    if (!selectedSubtitleItem) return
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target) return
+
+      const cfg = subtitleConfigRef.current
+      if (cfg && cfg.contains(target)) return
+
+      const overlay = subtitleOverlayElRef.current
+      if (overlay && overlay.contains(target)) return
+
+      setSelectedTimelineItemId(null)
+    }
+
+    window.addEventListener("pointerdown", onPointerDown, true)
+    return () => window.removeEventListener("pointerdown", onPointerDown, true)
+  }, [selectedSubtitleItem])
+
+  useEffect(() => {
+    if (!isPreviewSelected) return
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target) return
+
+      const videoEl = previewVideoRef.current
+      if (videoEl && videoEl.contains(target)) return
+
+      const cropOverlay = cropOverlayRef.current
+      if (cropOverlay && cropOverlay.contains(target)) return
+
+      setIsPreviewSelected(false)
+    }
+
+    window.addEventListener("pointerdown", onPointerDown, true)
+    return () => window.removeEventListener("pointerdown", onPointerDown, true)
+  }, [isPreviewSelected])
 
   const handleCyclePlaybackRate = () => {
     const rates: Array<0.5 | 0.75 | 1 | 1.25 | 1.5 | 2> = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -918,577 +1043,95 @@ export default function ClipEditPage() {
 
       <div className="px-4 p-2 flex-1 flex flex-col overflow-hidden">
         <div className="flex flex-1 overflow-hidden">
-          {/* Left panel */}
-          <div className="overflow-hidden w-1/3 flex flex-col min-h-0">
-            <div className="p-3 shrink-0">
-              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-                <TabsList className="w-full h-10" variant="default">
-                  <TabsTrigger value="Transcrição">Transcrição</TabsTrigger>
-                  <TabsTrigger value="Editar Subtítulos">Editar Subtítulos</TabsTrigger>
-                </TabsList>
+          <LeftPanel
+            activeTab={activeTab}
+            onActiveTabChange={setActiveTab as any}
+            subtitleMode={subtitleMode}
+            onSubtitleModeChange={setSubtitleMode as any}
+            search={search}
+            onSearchChange={setSearch}
+            showLeftTopFade={showLeftTopFade}
+            showLeftBottomFade={showLeftBottomFade}
+            leftScrollRef={leftScrollRef}
+            isTabTranscript={isTabTranscript}
+            clipSegments={clipSegments}
+            filteredSegments={filteredSegments}
+            leftPanelSegments={leftPanelSegments}
+            editedSubtitleTextById={editedSubtitleTextById}
+            editingSegmentId={editingSegmentId}
+            editingText={editingText}
+            onEditingTextChange={setEditingText}
+            segmentKey={segmentKey}
+            startEditingSegment={startEditingSegment}
+            commitEditingSegment={commitEditingSegment}
+            cancelEditingSegment={cancelEditingSegment}
+            formatTimeLabel={formatTimeLabel}
+            formatTimeRangeLabel={formatTimeRangeLabel}
+          />
 
-                <TabsContent value="Transcrição" className='flex mt-3 items-center justify-center gap-2'>
-                  <div className="flex-1">
-                    <Input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search"
-                      className="h-10"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 justify-center">
-                    <Button variant="ghost" size="icon">
-                      <HugeiconsIcon icon={Copy02Icon} size={20} />
-                    </Button>
-                    <Button variant="ghost" size="icon">
-                      <HugeiconsIcon icon={DownloadSquare01Icon} size={20} />
-                    </Button>
-                  </div>
-                </TabsContent>
+          <PreviewArea
+            previewAspectClass={previewAspectClass}
+            previewContainerRef={previewContainerRef}
+            previewVideoRef={previewVideoRef}
+            cropOverlayRef={cropOverlayRef}
+            subtitleOverlayElRef={subtitleOverlayElRef}
+            isPreviewSelected={isPreviewSelected}
+            onTogglePreviewSelected={() => setIsPreviewSelected((v) => !v)}
+            fullVideoUrl={fullVideoUrl}
+            rotation={rotation}
+            ratio={ratio}
+            videoPan={videoPan}
+            cropRect={cropRect}
+            onVideoPointerDown={onVideoPointerDown}
+            onStartRotateDrag={startRotateDrag}
+            onStartCropDrag={startCropDrag}
+            activeSubtitlesForPreview={activeSubtitlesForPreview}
+            subtitleOverlayPos={subtitleOverlayPos}
+            subtitleStyle={subtitleStyle}
+            onSelectSubtitle={(id) => setSelectedTimelineItemId(id)}
+            onStartSubtitleOverlayDrag={startSubtitleOverlayDrag}
+          />
 
-                <TabsContent value="Editar Subtítulos">
-                  <div className="mt-3 flex items-center gap-2">
-                    <div className="flex-1">
-                      <Input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search"
-                        className="h-10"
-                      />
-                    </div>
-
-                    <Tabs value={subtitleMode} onValueChange={(v) => setSubtitleMode(v as any)}>
-                      <TabsList variant="default" className='h-10'>
-                        <TabsTrigger value="Paragraph" className="group gap-2">
-                          <HugeiconsIcon icon={TextAlignJustifyCenterIcon} size={16} />
-                          <span className="hidden group-data-[active]:inline">Paragraph</span>
-                        </TabsTrigger>
-                        <TabsTrigger value="Sentence" className="group gap-2">
-                          <HugeiconsIcon icon={ClosedCaptionFreeIcons} size={16} />
-                          <span className="hidden group-data-[active]:inline">Sentence</span>
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="icon">
-                        <HugeiconsIcon icon={ChatTranslate01Icon} size={20} />
-                      </Button>
-                      <Button variant="ghost" size="icon">
-                        <HugeiconsIcon icon={Settings05Icon} size={20} />
-                      </Button>
-                    </div>
-                  </div>
-                </TabsContent>
-              </Tabs>
-
-            </div>
-
-            <div className="flex-1 relative overflow-hidden">
-              {showLeftTopFade && (
-                <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-background to-transparent z-10 pointer-events-none" />
-              )}
-              {showLeftBottomFade && (
-                <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-background to-transparent z-10 pointer-events-none" />
-              )}
-
-              <ScrollArea ref={leftScrollRef} className="h-full">
-                <div className="p-3">
-                  {isTabTranscript ? (
-                    clipSegments.length === 0 ? (
-                      <div className="text-sm text-muted-foreground py-10 text-center">Nenhum trecho encontrado.</div>
-                    ) : (
-                      <div className="divide-y divide-border">
-                        {(search.trim() ? filteredSegments : clipSegments).map((seg, idx) => {
-                          const segmentId = segmentKey(seg)
-                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
-                          const isEditing = editingSegmentId === segmentId
-                          return (
-                            <div key={`${seg.start}-${idx}`} className="py-3">
-                              {isEditing ? (
-                                <Input
-                                  value={editingText}
-                                  onChange={(e) => setEditingText(e.target.value)}
-                                  onBlur={commitEditingSegment}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") commitEditingSegment()
-                                    if (e.key === "Escape") cancelEditingSegment()
-                                  }}
-                                  className="h-10"
-                                  autoFocus
-                                />
-                              ) : (
-                                <div
-                                  className="text-sm text-foreground/90 leading-relaxed"
-                                  onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
-                                >
-                                  {textValue}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )
-                  ) : (
-                    leftPanelSegments.length === 0 ? (
-                      <div className="text-sm text-muted-foreground py-10 text-center">Nenhum trecho encontrado.</div>
-                    ) : subtitleMode === "Sentence" ? (
-                      <div className="divide-y divide-border">
-                        {leftPanelSegments.map((seg, idx) => {
-                          const segmentId = segmentKey(seg)
-                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
-                          const isEditing = editingSegmentId === segmentId
-                          return (
-                            <div key={`${seg.start}-${idx}`} className="py-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="w-28 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
-                                  {formatTimeRangeLabel(seg.start)} - {formatTimeRangeLabel(seg.end)}
-                                </div>
-                                <div className="flex-1">
-                                  {isEditing ? (
-                                    <Input
-                                      value={editingText}
-                                      onChange={(e) => setEditingText(e.target.value)}
-                                      onBlur={commitEditingSegment}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") commitEditingSegment()
-                                        if (e.key === "Escape") cancelEditingSegment()
-                                      }}
-                                      className="h-10"
-                                      autoFocus
-                                    />
-                                  ) : (
-                                    <div
-                                      className="text-sm text-foreground/90 leading-relaxed"
-                                      onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
-                                    >
-                                      {textValue}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border">
-                        {leftPanelSegments.map((seg, idx) => {
-                          const segmentId = segmentKey(seg)
-                          const textValue = editedSubtitleTextById[segmentId] ?? seg.text
-                          const isEditing = editingSegmentId === segmentId
-                          return (
-                            <div key={`${seg.start}-${idx}`} className="py-3">
-                              <div className="flex items-start gap-3">
-                                <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground pt-0.5">
-                                  {formatTimeLabel(seg.start)}
-                                </div>
-                                <div className="flex-1">
-                                  {isEditing ? (
-                                    <Input
-                                      value={editingText}
-                                      onChange={(e) => setEditingText(e.target.value)}
-                                      onBlur={commitEditingSegment}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") commitEditingSegment()
-                                        if (e.key === "Escape") cancelEditingSegment()
-                                      }}
-                                      className="h-10"
-                                      autoFocus
-                                    />
-                                  ) : (
-                                    <div
-                                      className="text-sm text-foreground/90 leading-relaxed"
-                                      onDoubleClick={() => startEditingSegment(segmentId, textValue || "")}
-                                    >
-                                      {textValue}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )
-                  )
-                )}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-
-          {/* Center */}
-          <div className="flex-1 flex-col p-2 flex items-center justify-center min-h-0">
-            <div className="w-full flex items-center justify-center gap-4">
-              <div
-                className={"relative w-[400px] max-h-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer " + previewAspectClass}
-                ref={previewContainerRef}
-                onClick={() => setIsPreviewSelected((v) => !v)}
-              >
-                {isPreviewSelected ? (
-                  <div
-                    className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-accent rounded-full px-2 py-1 flex items-center gap-1 border border-border"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Button variant="ghost" className="h-8 px-2 gap-2">
-                      <HugeiconsIcon icon={GeometricShapes01Icon} size={18} />
-                    </Button>
-
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title={`Ratio (${ratio})`}>
-                      <HugeiconsIcon icon={BendToolIcon} size={18} />
-                    </Button>
-
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Camada">
-                      <HugeiconsIcon icon={Layers01Icon} size={18} />
-                    </Button>
-
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Deletar camada">
-                      <HugeiconsIcon icon={Delete02Icon} size={18} />
-                    </Button>
-                  </div>
-                ) : null}
-
-                {fullVideoUrl ? (
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      transform: `rotate(${rotation}deg)`,
-                      transformOrigin: "50% 50%",
-                      willChange: "transform",
-                    }}
-                  >
-                    <video
-                      ref={previewVideoRef}
-                      src={fullVideoUrl}
-                      className="w-full h-full object-cover"
-                      onPointerDown={onVideoPointerDown}
-                      style={{
-                        clipPath: `inset(${cropRect.y}% ${100 - (cropRect.x + cropRect.w)}% ${100 - (cropRect.y + cropRect.h)}% ${cropRect.x}%)`,
-                        objectPosition: `${50 + videoPan.x}% ${50 + videoPan.y}%`,
-                      }}
-                    />
-
-                    {activeSubtitleForPreview ? (
-                      <div
-                        className="absolute z-20 px-4 py-2 text-center select-none"
-                        style={{
-                          left: `${subtitleOverlayPos.x}%`,
-                          top: `${subtitleOverlayPos.y}%`,
-                          transform: "translate(-50%, -50%)",
-                          fontFamily: subtitleStyle.fontFamily,
-                          color: subtitleStyle.color,
-                          textShadow: subtitleStyle.shadow
-                            ? "0px 2px 8px rgba(0,0,0,0.85)"
-                            : "none",
-                          cursor: "grab",
-                          pointerEvents: "auto",
-                          maxWidth: "90%",
-                          fontWeight: 800,
-                          fontSize: 34,
-                          lineHeight: 1.15,
-                          whiteSpace: "pre-wrap",
-                        }}
-                        onPointerDown={(e) => {
-                          setSelectedTimelineItemId(activeSubtitleForPreview.id)
-                          startSubtitleOverlayDrag(e)
-                        }}
-                      >
-                        {activeSubtitleForPreview.text}
-                      </div>
-                    ) : null}
-
-                    {isPreviewSelected ? (
-                      <div
-                        ref={cropOverlayRef}
-                        className="absolute z-10 border-2 border-primary"
-                        style={{
-                          left: `${cropRect.x}%`,
-                          top: `${cropRect.y}%`,
-                          width: `${cropRect.w}%`,
-                          height: `${cropRect.h}%`,
-                          pointerEvents: "none",
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div
-                          onPointerDown={startRotateDrag}
-                          className="absolute size-3 bg-white border border-border rounded-full"
-                          style={{
-                            left: "50%",
-                            top: "-18px",
-                            transform: "translate(-50%, -50%)",
-                            cursor: "grab",
-                            pointerEvents: "auto",
-                          }}
-                          title="Rotate"
-                        />
-
-                        {([
-                          { key: "nw", x: 0, y: 0, cursor: "nwse-resize" },
-                          { key: "n", x: 50, y: 0, cursor: "ns-resize" },
-                          { key: "ne", x: 100, y: 0, cursor: "nesw-resize" },
-                          { key: "e", x: 100, y: 50, cursor: "ew-resize" },
-                          { key: "se", x: 100, y: 100, cursor: "nwse-resize" },
-                          { key: "s", x: 50, y: 100, cursor: "ns-resize" },
-                          { key: "sw", x: 0, y: 100, cursor: "nesw-resize" },
-                          { key: "w", x: 0, y: 50, cursor: "ew-resize" },
-                        ] as const).map((h) => (
-                          <div
-                            key={h.key}
-                            onPointerDown={(e) => startCropDrag(h.key, e)}
-                            className="absolute size-2.5 bg-white border border-border rounded-sm"
-                            style={{
-                              left: `${h.x}%`,
-                              top: `${h.y}%`,
-                              transform: "translate(-50%, -50%)",
-                              cursor: h.cursor,
-                              pointerEvents: "auto",
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <span className="text-muted-foreground text-sm">Preview</span>
-                )}
-              </div>
-
-              {selectedSubtitleItem ? (
-                <div className="w-[260px] shrink-0 rounded-lg border border-border bg-background p-3">
-                  <div className="text-sm font-medium mb-3">Legenda</div>
-
-                  <div className="space-y-3">
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Fonte</div>
-                      <Select
-                        value={subtitleStyle.fontFamily}
-                        onValueChange={(v) => setSubtitleStyle((s) => ({ ...s, fontFamily: v }))}
-                      >
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Montserrat ExtraBold">Montserrat ExtraBold</SelectItem>
-                          <SelectItem value="Montserrat">Montserrat</SelectItem>
-                          <SelectItem value="Inter">Inter</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Cor</div>
-                      <Input
-                        value={subtitleStyle.color}
-                        onChange={(e) => setSubtitleStyle((s) => ({ ...s, color: e.target.value }))}
-                        className="h-9"
-                        placeholder="#FFFFFF"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      className={
-                        "h-9 w-full rounded-md border border-border text-sm " +
-                        (subtitleStyle.shadow ? "bg-accent" : "bg-transparent hover:bg-accent")
-                      }
-                      onClick={() => setSubtitleStyle((s) => ({ ...s, shadow: !s.shadow }))}
-                    >
-                      Sombra: {subtitleStyle.shadow ? "On" : "Off"}
-                    </button>
-
-                    <div className="text-xs text-muted-foreground">
-                      {formatTimeRangeLabel(selectedSubtitleItem.start)} - {formatTimeRangeLabel(selectedSubtitleItem.end)}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-3 flex items-center justify-center gap-2 w-full">
-              <button
-                type="button"
-                className="h-9 rounded-md px-3 inline-flex items-center gap-2 border border-border text-foreground/90 hover:bg-muted"
-              >
-                <HugeiconsIcon icon={TextSquareIcon} size={18} />
-                <span className="text-sm">Ratio ({ratio})</span>
-              </button>
-
-              <button
-                type="button"
-                className="h-9 rounded-md px-3 inline-flex items-center gap-2 border border-border text-foreground/90 hover:bg-muted"
-              >
-                <HugeiconsIcon icon={MagicWand01Icon} size={18} />
-                <span className="text-sm">Background</span>
-              </button>
-
-              <button
-                type="button"
-                className="h-9 rounded-md px-3 inline-flex items-center gap-2 border border-border text-foreground/90 hover:bg-muted"
-              >
-                <HugeiconsIcon icon={SubtitleIcon} size={18} />
-                <span className="text-sm">Layouts</span>
-              </button>
-
-            </div>
-          </div>
-
-          {/* Right panel */}
-          <div className="overflow-hidden p-2 w-[80px]">
-          </div>
+          <SubtitleConfigPanel
+            subtitleConfigRef={subtitleConfigRef}
+            selectedSubtitleItem={selectedSubtitleItem}
+            subtitleStyle={subtitleStyle}
+            setSubtitleStyle={setSubtitleStyle}
+            formatTimeRangeLabel={formatTimeRangeLabel}
+          />
         </div>
 
-        <div className="shrink-0 px-6">
-          <div className="h-12 grid grid-cols-3 items-center">
-            <div className="flex items-center gap-2" />
+        <TimelineTransportBar
+          clipStart={clipStart}
+          clipEnd={clipEnd}
+          relativeTime={relativeTime}
+          isPlaying={isPlaying}
+          playbackRate={playbackRate}
+          showTimeline={showTimeline}
+          formatTimeRangeLabel={formatTimeRangeLabel}
+          onTogglePlay={handleTogglePlay}
+          onCyclePlaybackRate={handleCyclePlaybackRate}
+          onSplit={handleSplitSelected}
+          onToggleTimeline={() => setShowTimeline((v) => !v)}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+        />
 
-            <div className="flex items-center justify-center gap-3">
-              <span className="text-xs tabular-nums text-muted-foreground">{formatTimeRangeLabel(clipStart + relativeTime)}</span>
-              <button
-                type="button"
-                onClick={handleTogglePlay}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-full bg-accent"
-              >
-                {isPlaying ? <Pause className="size-4 fill-foreground" /> : <Play className="size-4 fill-foreground" />}
-              </button>
-              <span className="text-xs tabular-nums text-muted-foreground">{formatTimeRangeLabel(clipEnd)}</span>
-            </div>
-
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={handleCyclePlaybackRate}
-                className="h-8 px-2 rounded-md bg-transparent border border-border text-sm hover:bg-accent"
-                title="Velocidade"
-              >
-                {playbackRate}x
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSplitSelected}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-accent"
-                title="Split"
-              >
-                <Scissors className="size-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowTimeline(false)}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-accent"
-                title="Fechar"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom timeline area */}
-        <div className={showTimeline ? "shrink-0 max-h-[200px] min-h-[200px]" : "hidden"}>
-
-          <div className="h-full px-4 py-4">
-            <div ref={timelineContainerRef} className="relative h-full bg-background/20 overflow-hidden" onPointerDown={handleTimelinePointerDown}>
-              {showTimelineLeftFade ? (
-                <div className="pointer-events-none absolute z-10 left-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-r from-background/60 to-transparent" />
-              ) : null}
-              {showTimelineRightFade ? (
-                <div className="pointer-events-none absolute z-10 right-0 top-0 bottom-0 w-10 z-30 bg-gradient-to-l from-background/60 to-transparent" />
-              ) : null}
-
-              <div
-                className="absolute top-0 bottom-0 z-20 cursor-pointer"
-                style={{
-                  left:
-                    clipDuration > 0
-                      ? `${Math.min(Math.max(relativeTime / clipDuration, 0), 1) * 100}%`
-                      : "0%",
-                }}
-                onPointerDown={handleTimelinePointerDown}
-              >
-                <img
-                  src="/trim-cursor-editor.svg"
-                  alt="Playhead"
-                  className="h-full w-auto z-50 -translate-x-1/2 pointer-events-none select-none pl-[16px]"
-                />
-              </div>
-
-              <ScrollArea className="h-full" ref={timelineScrollRef}>
-                <div className="w-max min-w-full">
-                  <div className="h-7 flex items-end px-2 relative">
-                    <div className="absolute inset-x-0 bottom-0 h-px bg-border/60" />
-                    <div className="w-full h-full relative">
-                      {Array.from({ length: 6 }).map((_, i) => (
-                        <div
-                          key={`tick-${i}`}
-                          className="absolute bottom-1 text-[10px] tabular-nums text-muted-foreground"
-                          style={{ left: `${(i / 5) * 100}%` }}
-                        >
-                          {formatTimeLabel((clipDuration || 30) * (i / 5))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="px-2 py-2 space-y-2">
-                    {Array.from({ length: tracksCount }).map((_, trackIdx) => {
-                      const items = timelineItems.filter((it) => it.track === trackIdx)
-                      const trackLabel = trackIdx === 0 ? "Video" : trackIdx === 1 ? "Legendas" : `Track ${trackIdx + 1}`
-
-                      return (
-                        <div key={`track-${trackIdx}`} className="flex items-center gap-2">
-                          <div className="w-20 shrink-0 text-[10px] text-muted-foreground">{trackLabel}</div>
-                          <div className="flex-1 h-10 relative rounded-md border border-border bg-background/40">
-                            {items.map((it) => {
-                              const leftPct = clipDuration > 0 ? (it.start / clipDuration) * 100 : 0
-                              const widthPct = clipDuration > 0 ? Math.max(1, ((it.end - it.start) / clipDuration) * 100) : 0
-                              const isSelected = selectedTimelineItemId === it.id
-                              const base = it.type === "video" ? "bg-[#7DD3FC]" : "bg-[#FFE46E]"
-                              const textColor = it.type === "video" ? "text-[#083344]" : "text-[#504720]"
-
-                              return (
-                                <div
-                                  key={it.id}
-                                  className={
-                                    "absolute top-1 bottom-1 rounded-md border text-xs px-2 flex items-center gap-2 select-none " +
-                                    base +
-                                    (isSelected ? " border-foreground/40" : " border-border")
-                                  }
-                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                  onPointerDown={(e) => startTimelineItemDrag(e, it.id, "move")}
-                                >
-                                  <div
-                                    className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize"
-                                    onPointerDown={(e) => startTimelineItemDrag(e, it.id, "trim-start")}
-                                  />
-                                  <div
-                                    className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize"
-                                    onPointerDown={(e) => startTimelineItemDrag(e, it.id, "trim-end")}
-                                  />
-
-                                  <span className={"text-[10px] tabular-nums shrink-0 " + textColor}>
-                                    {formatTimeLabel(it.start)}
-                                  </span>
-                                  <span className={"truncate " + textColor}>
-                                    {it.type === "video" ? "Video" : (it.text || "Legenda")}
-                                  </span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-        </div>
+        <TimelineArea
+          showTimeline={showTimeline}
+          clipDuration={clipDuration}
+          relativeTime={relativeTime}
+          showTimelineLeftFade={showTimelineLeftFade}
+          showTimelineRightFade={showTimelineRightFade}
+          timelineContainerRef={timelineContainerRef}
+          timelineScrollRef={timelineScrollRef}
+          onTimelinePointerDown={handleTimelinePointerDown}
+          formatTimeLabel={formatTimeLabel}
+          tracksCount={tracksCount}
+          timelineItems={timelineItems}
+          selectedTimelineItemId={selectedTimelineItemId}
+          startTimelineItemDrag={startTimelineItemDrag}
+        />
       </div>
     </div>
   )
